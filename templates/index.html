@@ -748,7 +748,7 @@ async function startRec() {
 }
 
 function startSilenceDetection(audioStream) {
-  // Setup audio analysis for silence detection
+  // Setup audio analysis for silence detection (same as interview_agent)
   try {
     S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const source = S.audioCtx.createMediaStreamSource(audioStream);
@@ -757,63 +757,50 @@ function startSilenceDetection(audioStream) {
     source.connect(S.analyserNode);
 
     const dataArray = new Uint8Array(S.analyserNode.frequencyBinCount);
-    let silentFrames = 0;
-    let hasSpoken = false;
-    let elapsed = 0;
-    const SILENCE_THRESHOLD = 10; // Lower threshold - more sensitive to speech
-    const SILENCE_FRAMES_NEEDED = 30; // 3 seconds of silence after speaking (at 100ms intervals)
-    const MAX_RECORD_TIME = 450; // 45 seconds max (at 100ms intervals)
+    let silenceStart = null;
+    let speechDetected = false;
+    const SILENCE_THRESHOLD = 15;
+    const SILENCE_TIMEOUT = 3000; // 3 seconds
 
-    console.log('Silence detection started');
+    console.log('Silence detection started (threshold:', SILENCE_THRESHOLD, ', timeout:', SILENCE_TIMEOUT, 'ms)');
 
-    S.silenceTimer = setInterval(() => {
-      if (!S.isRecording) {
-        clearInterval(S.silenceTimer);
-        return;
-      }
+    const checkAudio = () => {
+      if (!S.isRecording) return;
 
-      elapsed++;
       S.analyserNode.getByteFrequencyData(dataArray);
-      const avgVolume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-      const maxVolume = Math.max(...dataArray);
+      const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
-      // Update visual feedback
-      const remainingSec = Math.max(0, Math.floor((MAX_RECORD_TIME - elapsed) / 10));
+      const isSilent = avg < SILENCE_THRESHOLD;
 
-      if (avgVolume > SILENCE_THRESHOLD || maxVolume > 30) {
-        hasSpoken = true;
-        silentFrames = 0;
-        document.getElementById('slbl2').textContent = `Speaking... (${remainingSec}s max)`;
+      if (!isSilent) {
+        speechDetected = true;
+        silenceStart = null;
+        document.getElementById('slbl2').textContent = `Speaking... (level: ${avg.toFixed(0)})`;
         document.getElementById('wbars').classList.remove('off');
-        if (elapsed % 10 === 0) console.log('Speaking detected, vol:', avgVolume.toFixed(1), 'max:', maxVolume);
       } else {
-        silentFrames++;
         document.getElementById('wbars').classList.add('off');
-        if (hasSpoken) {
-          const silentSec = Math.floor(silentFrames / 10);
-          document.getElementById('slbl2').textContent = `Silence ${silentSec}s... (auto-stop at 3s)`;
+        if (speechDetected) {
+          if (silenceStart === null) {
+            silenceStart = Date.now();
+          } else {
+            const silenceDuration = Date.now() - silenceStart;
+            document.getElementById('slbl2').textContent = `Pause detected (${(silenceDuration/1000).toFixed(1)}s)`;
+
+            if (silenceDuration >= SILENCE_TIMEOUT) {
+              console.log('Silence detected after speech, stopping. Chunks:', S.audioChunks.length);
+              document.getElementById('slbl2').textContent = 'Processing...';
+              stopRec();
+              return;
+            }
+          }
         } else {
-          document.getElementById('slbl2').textContent = `Waiting for speech... (${remainingSec}s max)`;
+          document.getElementById('slbl2').textContent = 'Waiting for speech...';
         }
       }
 
-      // Auto-stop conditions
-      // 1. After speaking, 3 seconds of silence
-      if (hasSpoken && silentFrames >= SILENCE_FRAMES_NEEDED) {
-        console.log('Silence detected after speech, stopping. Chunks:', S.audioChunks.length);
-        clearInterval(S.silenceTimer);
-        stopRec();
-        return;
-      }
-
-      // 2. Max recording time
-      if (elapsed >= MAX_RECORD_TIME) {
-        console.log('Max recording time reached. Chunks:', S.audioChunks.length);
-        clearInterval(S.silenceTimer);
-        stopRec();
-        return;
-      }
-    }, 100);
+      requestAnimationFrame(checkAudio);
+    };
+    checkAudio();
 
   } catch (e) {
     console.error('Audio analysis setup failed:', e);
