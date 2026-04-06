@@ -671,103 +671,67 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 // ══════════════════════════════════════════════════
 // RECORDING
 // ══════════════════════════════════════════════════
+// Audio recording variables (same as interview_agent)
+let mediaStream = null;
+let audioContext = null;
+let analyser = null;
+let silenceStart = null;
+let speechDetected = false;
+const SILENCE_THRESHOLD = 15;
+const SILENCE_TIMEOUT = 3000;
+
 async function startRec() {
   if(S.isRecording) return;
 
-  // Always get fresh audio stream for recording
   try {
-    console.log('Requesting microphone access...');
-    const audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: true  // Simple constraint - more compatible
+    // Get microphone access (same as interview_agent)
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true
+      }
     });
-    console.log('Microphone access granted, tracks:', audioStream.getAudioTracks().length);
+
+    // Setup audio analyser (same as interview_agent)
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    source.connect(analyser);
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    // Create MediaRecorder (same as interview_agent)
+    S.mediaRecorder = new MediaRecorder(mediaStream, {
+      mimeType: 'audio/webm;codecs=opus'
+    });
 
     S.audioChunks = [];
+    S.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        S.audioChunks.push(event.data);
+      }
+    };
+
+    S.mediaRecorder.onstop = onStop;
+
+    S.mediaRecorder.start(100);
     S.isRecording = true;
     S.recordingStartTime = Date.now();
     S.inputMode = 'voice';
+    speechDetected = false;
+    silenceStart = null;
 
-    // Create MediaRecorder - try different formats
-    let recorder = null;
-    const mimeTypes = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-      ''  // Let browser choose
-    ];
+    document.getElementById('slbl2').textContent = 'Speak now...';
+    document.getElementById('wbars').classList.remove('off');
 
-    for (const mimeType of mimeTypes) {
-      try {
-        if (mimeType && MediaRecorder.isTypeSupported(mimeType)) {
-          recorder = new MediaRecorder(audioStream, { mimeType });
-          console.log('Using mimeType:', mimeType);
-          break;
-        } else if (!mimeType) {
-          recorder = new MediaRecorder(audioStream);
-          console.log('Using default mimeType');
-          break;
-        }
-      } catch (e) {
-        console.log('mimeType not supported:', mimeType);
-      }
-    }
-
-    if (!recorder) {
-      throw new Error('No supported audio format found');
-    }
-
-    S.mediaRecorder = recorder;
-    S.currentMime = S.mediaRecorder.mimeType || 'audio/webm';
-    S.recordingStream = audioStream;
-    console.log('Recording with mime:', S.currentMime);
-
-    S.mediaRecorder.ondataavailable = e => {
-      if (e.data && e.data.size > 0) {
-        S.audioChunks.push(e.data);
-        console.log('Audio chunk:', e.data.size, 'bytes, total chunks:', S.audioChunks.length);
-      }
-    };
-    S.mediaRecorder.onstop = onStop;
-    S.mediaRecorder.onerror = e => {
-      console.error('MediaRecorder error:', e);
-      setStatus('Recording error. Use text input.');
-      setState('idle');
-    };
-
-    // Start recording - collect data every 1 second
-    S.mediaRecorder.start(1000);
-    console.log('MediaRecorder started, state:', S.mediaRecorder.state);
-    startSilenceDetection(audioStream);
-
-  } catch (e) {
-    console.error('Mic access error:', e);
-    setStatus('Mic error: ' + e.message + '. Use text below.');
-    setState('idle');
-  }
-}
-
-function startSilenceDetection(audioStream) {
-  // Setup audio analysis for silence detection (same as interview_agent)
-  try {
-    S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const source = S.audioCtx.createMediaStreamSource(audioStream);
-    S.analyserNode = S.audioCtx.createAnalyser();
-    S.analyserNode.fftSize = 256;
-    source.connect(S.analyserNode);
-
-    const dataArray = new Uint8Array(S.analyserNode.frequencyBinCount);
-    let silenceStart = null;
-    let speechDetected = false;
-    const SILENCE_THRESHOLD = 15;
-    const SILENCE_TIMEOUT = 3000; // 3 seconds
-
-    console.log('Silence detection started (threshold:', SILENCE_THRESHOLD, ', timeout:', SILENCE_TIMEOUT, 'ms)');
-
+    // Audio level monitoring (same as interview_agent)
     const checkAudio = () => {
       if (!S.isRecording) return;
 
-      S.analyserNode.getByteFrequencyData(dataArray);
+      analyser.getByteFrequencyData(dataArray);
       const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
       const isSilent = avg < SILENCE_THRESHOLD;
@@ -787,7 +751,6 @@ function startSilenceDetection(audioStream) {
             document.getElementById('slbl2').textContent = `Pause detected (${(silenceDuration/1000).toFixed(1)}s)`;
 
             if (silenceDuration >= SILENCE_TIMEOUT) {
-              console.log('Silence detected after speech, stopping. Chunks:', S.audioChunks.length);
               document.getElementById('slbl2').textContent = 'Processing...';
               stopRec();
               return;
@@ -802,47 +765,34 @@ function startSilenceDetection(audioStream) {
     };
     checkAudio();
 
-  } catch (e) {
-    console.error('Audio analysis setup failed:', e);
-    // Fallback to fixed timer - 30 seconds
-    let elapsed = 0;
-    S.silenceTimer = setInterval(() => {
-      if (!S.isRecording) { clearInterval(S.silenceTimer); return; }
-      elapsed++;
-      const remaining = 30 - elapsed;
-      document.getElementById('slbl2').textContent = `Recording... (${remaining}s remaining)`;
-      if (elapsed >= 30) {
-        console.log('Fixed timer: stopping recording. Chunks:', S.audioChunks.length);
-        clearInterval(S.silenceTimer);
-        stopRec();
-      }
-    }, 1000);
+  } catch (err) {
+    console.error('Microphone error:', err);
+    document.getElementById('slbl2').textContent = 'Microphone error: ' + err.message;
+    setState('idle');
   }
 }
 
 
 function stopRec() {
   if(!S.isRecording) return;
-  S.isRecording = false;
-  clearInterval(S.silenceTimer);
-  clearTimeout(S.silenceTimer);
-  S.silenceTimer = null;
 
-  // Stop analyser
-  try { if(S.analyserNode) S.analyserNode.disconnect(); } catch(e) {}
-  try { if(S.audioCtx) S.audioCtx.close(); } catch(e) {}
-  S.analyserNode = null;
-  S.audioCtx = null;
+  S.isRecording = false;
+  speechDetected = false;
+  silenceStart = null;
 
   // Stop MediaRecorder
   if(S.mediaRecorder && S.mediaRecorder.state !== 'inactive') {
     S.mediaRecorder.stop();
   }
 
-  // Stop recording stream tracks (important!)
-  if(S.recordingStream) {
-    S.recordingStream.getTracks().forEach(track => track.stop());
-    S.recordingStream = null;
+  // Stop media stream tracks
+  if(mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+  }
+
+  // Close audio context
+  if(audioContext) {
+    audioContext.close();
   }
 
   document.getElementById('wbars').classList.add('off');
