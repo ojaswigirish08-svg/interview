@@ -114,6 +114,9 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
 .wb{width:3px;border-radius:3px;background:var(--acc);animation:wave .8s ease-in-out infinite;min-height:4px}
 .wb:nth-child(1){animation-delay:0s}.wb:nth-child(2){animation-delay:.1s}.wb:nth-child(3){animation-delay:.2s}.wb:nth-child(4){animation-delay:.3s}.wb:nth-child(5){animation-delay:.4s}.wb:nth-child(6){animation-delay:.3s}.wb:nth-child(7){animation-delay:.2s}.wb:nth-child(8){animation-delay:.1s}.wb:nth-child(9){animation-delay:0s}.wb:nth-child(10){animation-delay:.15s}.wb:nth-child(11){animation-delay:.25s}.wb:nth-child(12){animation-delay:.35s}
 .wbars.off .wb{animation:none;height:4px;background:var(--g200)}
+.transcript-box{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:12px 16px;margin-top:10px}
+.transcript-label{font-size:11px;color:var(--g400);font-family:'DM Mono',monospace;text-transform:uppercase;margin-bottom:6px}
+.transcript-text{font-size:14px;color:var(--g800);line-height:1.5}
 .wst{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--g600)}
 .sdot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
 .sdot.listening{background:var(--rd);animation:blink .8s infinite}
@@ -374,6 +377,11 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
       </div>
       <div class="wst"><div class="sdot idle" id="sdot"></div><span id="slbl2">Waiting...</span></div>
     </div>
+    <!-- Transcript display -->
+    <div class="transcript-box" id="transcript-box" style="display:none">
+      <div class="transcript-label">Your answer:</div>
+      <div class="transcript-text" id="transcript-text"></div>
+    </div>
     <div class="tfall">
       <input type="text" id="tinput" class="tinput" placeholder="Type your answer here..." onkeydown="tkey(event)">
       <button class="btn btn-s btn-sm" onclick="sendText()">Send</button>
@@ -609,6 +617,7 @@ function displayQ(data) {
   document.getElementById('qcard').classList.remove('faded');
   document.getElementById('hint-box').classList.remove('show');
   document.getElementById('repeat-banner').classList.remove('show');
+  document.getElementById('transcript-box').style.display = 'none';  // Hide previous transcript
 
   const tl={definition:'Definition',scenario:'Scenario',personal_anchor:'Personal Experience',
     numerical:'Numerical Probe',contradiction:'Deep Dive',warmup:'Warmup',
@@ -825,6 +834,10 @@ async function onStop() {
     S.repeatRequested=false;
 
     if(txt) {
+      // Display the transcribed text
+      document.getElementById('transcript-text').textContent = txt;
+      document.getElementById('transcript-box').style.display = 'block';
+
       const wc=txt.split(/\s+/).filter(Boolean).length;
       await submitAnswer(txt, dur, wc, pause, 'voice', d.avg_confidence||1.0);
     } else {
