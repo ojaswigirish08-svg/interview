@@ -1,7 +1,8 @@
 fastapi==0.111.0
 uvicorn==0.30.1
 python-dotenv==1.0.1
-groq==0.8.0
+groq>=0.11.0
+httpx>=0.27.0,<0.28.0
 boto3==1.34.131
 openai>=1.0.0
 pdfplumber==0.11.0

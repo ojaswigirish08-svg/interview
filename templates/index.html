@@ -656,7 +656,7 @@ async function speak(text, b64) {
   S.questionEndTime=Date.now();
   document.getElementById('qcard').classList.add('faded');
   setStatus('Listening...'); setState('listening');
-  startRec();
+  await startRec();
 }
 
 function setStatus(t){document.getElementById('astatus').textContent=t;}
@@ -676,36 +676,56 @@ async function startRec() {
 
   // Always get fresh audio stream for recording
   try {
+    console.log('Requesting microphone access...');
     const audioStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 16000
-      }
+      audio: true  // Simple constraint - more compatible
     });
+    console.log('Microphone access granted, tracks:', audioStream.getAudioTracks().length);
 
     S.audioChunks = [];
     S.isRecording = true;
     S.recordingStartTime = Date.now();
     S.inputMode = 'voice';
 
-    // Create MediaRecorder with audio-only stream
-    const options = { mimeType: 'audio/webm;codecs=opus' };
-    try {
-      S.mediaRecorder = new MediaRecorder(audioStream, options);
-    } catch (e) {
-      // Fallback if opus not supported
-      S.mediaRecorder = new MediaRecorder(audioStream);
+    // Create MediaRecorder - try different formats
+    let recorder = null;
+    const mimeTypes = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4',
+      ''  // Let browser choose
+    ];
+
+    for (const mimeType of mimeTypes) {
+      try {
+        if (mimeType && MediaRecorder.isTypeSupported(mimeType)) {
+          recorder = new MediaRecorder(audioStream, { mimeType });
+          console.log('Using mimeType:', mimeType);
+          break;
+        } else if (!mimeType) {
+          recorder = new MediaRecorder(audioStream);
+          console.log('Using default mimeType');
+          break;
+        }
+      } catch (e) {
+        console.log('mimeType not supported:', mimeType);
+      }
     }
+
+    if (!recorder) {
+      throw new Error('No supported audio format found');
+    }
+
+    S.mediaRecorder = recorder;
     S.currentMime = S.mediaRecorder.mimeType || 'audio/webm';
-    S.recordingStream = audioStream; // Keep reference to stop later
+    S.recordingStream = audioStream;
     console.log('Recording with mime:', S.currentMime);
 
     S.mediaRecorder.ondataavailable = e => {
       if (e.data && e.data.size > 0) {
         S.audioChunks.push(e.data);
-        console.log('Audio chunk:', e.data.size, 'bytes');
+        console.log('Audio chunk:', e.data.size, 'bytes, total chunks:', S.audioChunks.length);
       }
     };
     S.mediaRecorder.onstop = onStop;
@@ -715,13 +735,14 @@ async function startRec() {
       setState('idle');
     };
 
-    // Start recording with frequent data collection
-    S.mediaRecorder.start(500); // Collect data every 500ms
+    // Start recording - collect data every 1 second
+    S.mediaRecorder.start(1000);
+    console.log('MediaRecorder started, state:', S.mediaRecorder.state);
     startSilenceDetection(audioStream);
 
   } catch (e) {
     console.error('Mic access error:', e);
-    setStatus('Mic access denied. Use text below.');
+    setStatus('Mic error: ' + e.message + '. Use text below.');
     setState('idle');
   }
 }
@@ -732,15 +753,18 @@ function startSilenceDetection(audioStream) {
     S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const source = S.audioCtx.createMediaStreamSource(audioStream);
     S.analyserNode = S.audioCtx.createAnalyser();
-    S.analyserNode.fftSize = 512;
+    S.analyserNode.fftSize = 256;
     source.connect(S.analyserNode);
 
     const dataArray = new Uint8Array(S.analyserNode.frequencyBinCount);
     let silentFrames = 0;
     let hasSpoken = false;
     let elapsed = 0;
-    const SILENCE_THRESHOLD = 15; // Audio level threshold
-    const SILENCE_FRAMES_NEEDED = 25; // ~2.5 seconds of silence after speaking
+    const SILENCE_THRESHOLD = 10; // Lower threshold - more sensitive to speech
+    const SILENCE_FRAMES_NEEDED = 30; // 3 seconds of silence after speaking (at 100ms intervals)
+    const MAX_RECORD_TIME = 450; // 45 seconds max (at 100ms intervals)
+
+    console.log('Silence detection started');
 
     S.silenceTimer = setInterval(() => {
       if (!S.isRecording) {
@@ -751,35 +775,40 @@ function startSilenceDetection(audioStream) {
       elapsed++;
       S.analyserNode.getByteFrequencyData(dataArray);
       const avgVolume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      const maxVolume = Math.max(...dataArray);
 
       // Update visual feedback
-      const remaining = Math.max(0, 30 - elapsed);
-      if (avgVolume > SILENCE_THRESHOLD) {
+      const remainingSec = Math.max(0, Math.floor((MAX_RECORD_TIME - elapsed) / 10));
+
+      if (avgVolume > SILENCE_THRESHOLD || maxVolume > 30) {
         hasSpoken = true;
         silentFrames = 0;
-        document.getElementById('slbl2').textContent = `Speaking... (${remaining}s max)`;
+        document.getElementById('slbl2').textContent = `Speaking... (${remainingSec}s max)`;
         document.getElementById('wbars').classList.remove('off');
+        if (elapsed % 10 === 0) console.log('Speaking detected, vol:', avgVolume.toFixed(1), 'max:', maxVolume);
       } else {
         silentFrames++;
+        document.getElementById('wbars').classList.add('off');
         if (hasSpoken) {
-          document.getElementById('slbl2').textContent = `Listening... (${remaining}s max)`;
+          const silentSec = Math.floor(silentFrames / 10);
+          document.getElementById('slbl2').textContent = `Silence ${silentSec}s... (auto-stop at 3s)`;
         } else {
-          document.getElementById('slbl2').textContent = `Waiting for speech... (${remaining}s max)`;
+          document.getElementById('slbl2').textContent = `Waiting for speech... (${remainingSec}s max)`;
         }
       }
 
       // Auto-stop conditions
-      // 1. After speaking, 2.5 seconds of silence
+      // 1. After speaking, 3 seconds of silence
       if (hasSpoken && silentFrames >= SILENCE_FRAMES_NEEDED) {
-        console.log('Silence detected after speech, stopping recording');
+        console.log('Silence detected after speech, stopping. Chunks:', S.audioChunks.length);
         clearInterval(S.silenceTimer);
         stopRec();
         return;
       }
 
-      // 2. Max 30 seconds recording time
-      if (elapsed >= 30) {
-        console.log('Max recording time reached');
+      // 2. Max recording time
+      if (elapsed >= MAX_RECORD_TIME) {
+        console.log('Max recording time reached. Chunks:', S.audioChunks.length);
         clearInterval(S.silenceTimer);
         stopRec();
         return;
@@ -788,14 +817,15 @@ function startSilenceDetection(audioStream) {
 
   } catch (e) {
     console.error('Audio analysis setup failed:', e);
-    // Fallback to fixed timer
+    // Fallback to fixed timer - 30 seconds
     let elapsed = 0;
     S.silenceTimer = setInterval(() => {
       if (!S.isRecording) { clearInterval(S.silenceTimer); return; }
       elapsed++;
-      const remaining = 20 - elapsed;
+      const remaining = 30 - elapsed;
       document.getElementById('slbl2').textContent = `Recording... (${remaining}s remaining)`;
-      if (elapsed >= 20) {
+      if (elapsed >= 30) {
+        console.log('Fixed timer: stopping recording. Chunks:', S.audioChunks.length);
         clearInterval(S.silenceTimer);
         stopRec();
       }
