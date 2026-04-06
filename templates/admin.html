@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VLSI Agent — Admin Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0a0a;--fg:#f1f5f9;--acc:#f97316;--g100:#1e293b;--g200:#334155;--g300:#475569;--g400:#64748b;--g500:#94a3b8;--gr:#22c55e;--rd:#ef4444;--yl:#eab308;--bl:#3b82f6;--pu:#a855f7}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--fg);min-height:100vh;font-size:14px}
+.mono{font-family:'DM Mono',monospace}
+h1,h2,h3{font-family:'Syne',sans-serif}
+
+/* LAYOUT */
+.layout{display:grid;grid-template-columns:280px 1fr;height:100vh;overflow:hidden}
+.sidebar{background:#050505;border-right:1px solid var(--g100);overflow-y:auto;display:flex;flex-direction:column}
+.main{overflow-y:auto;padding:24px}
+
+/* SIDEBAR */
+.sidebar-header{padding:20px;border-bottom:1px solid var(--g100)}
+.sidebar-title{font-size:16px;font-weight:800;color:var(--acc)}
+.sidebar-sub{font-size:11px;color:var(--g400);margin-top:4px;font-family:'DM Mono',monospace}
+.refresh-btn{width:100%;margin-top:10px;padding:8px;background:var(--g100);border:1px solid var(--g200);border-radius:6px;color:var(--g500);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:12px;transition:all .15s}
+.refresh-btn:hover{background:var(--g200);color:var(--fg)}
+.session-list{flex:1;padding:12px}
+.session-item{padding:12px;border-radius:8px;cursor:pointer;border:1px solid transparent;margin-bottom:6px;transition:all .15s}
+.session-item:hover{background:var(--g100);border-color:var(--g200)}
+.session-item.active{background:var(--g100);border-color:var(--acc)}
+.session-domain{font-size:12px;font-weight:600;color:var(--acc);font-family:'DM Mono',monospace}
+.session-meta{font-size:11px;color:var(--g400);margin-top:3px}
+.session-badges{display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
+.badge{font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;font-family:'DM Mono',monospace}
+.badge-warn{background:#451a03;color:#fb923c}
+.badge-danger{background:#450a0a;color:#f87171}
+.badge-ok{background:#052e16;color:#4ade80}
+.badge-info{background:#0c1a2e;color:#60a5fa}
+.no-sessions{padding:20px;text-align:center;color:var(--g400);font-size:13px}
+.auto-refresh{display:flex;align-items:center;gap:6px;padding:12px;border-top:1px solid var(--g100);font-size:12px;color:var(--g400)}
+.auto-refresh input{accent-color:var(--acc)}
+
+/* MAIN */
+.page-header{margin-bottom:24px}
+.page-title{font-size:22px;font-weight:800;color:var(--fg)}
+.page-sub{font-size:13px;color:var(--g400);margin-top:4px}
+
+/* STAT CARDS */
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:24px}
+.stat-card{background:var(--g100);border:1px solid var(--g200);border-radius:10px;padding:16px}
+.stat-label{font-size:10px;color:var(--g400);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px}
+.stat-val{font-size:28px;font-weight:800;font-family:'Syne',sans-serif;margin-top:4px}
+.stat-val.green{color:var(--gr)}.stat-val.red{color:var(--rd)}.stat-val.yellow{color:var(--yl)}.stat-val.orange{color:var(--acc)}.stat-val.blue{color:var(--bl)}
+
+/* TABS */
+.tabs{display:flex;gap:4px;margin-bottom:20px;border-bottom:1px solid var(--g200);padding-bottom:0}
+.tab{padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500;color:var(--g400);border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s}
+.tab:hover{color:var(--fg)}
+.tab.active{color:var(--acc);border-color:var(--acc)}
+.tab-content{display:none}.tab-content.active{display:block}
+
+/* TURN LOG TABLE */
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--g200)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:var(--g100);padding:10px 12px;text-align:left;font-weight:600;color:var(--g400);font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;white-space:nowrap;border-bottom:1px solid var(--g200)}
+td{padding:10px 12px;border-bottom:1px solid var(--g100);vertical-align:top;max-width:200px;word-break:break-word}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(255,255,255,.02)}
+.score-cell{font-weight:700;font-family:'DM Mono',monospace}
+.score-strong{color:var(--gr)}.score-adequate{color:var(--yl)}.score-weak{color:var(--rd)}.score-honest{color:var(--pu)}.score-warmup{color:var(--g400)}
+.quadrant-ge{color:var(--gr);font-size:11px}.quadrant-gn{color:var(--bl);font-size:11px}.quadrant-df{color:var(--rd);font-weight:700;font-size:11px}.quadrant-hc{color:var(--yl);font-size:11px}
+.flag-tag{display:inline-block;font-size:9px;font-family:'DM Mono',monospace;padding:2px 5px;border-radius:3px;background:#451a03;color:#fb923c;margin:1px}
+.flag-tag.ok{background:#052e16;color:#4ade80}
+.type-tag{font-size:10px;font-family:'DM Mono',monospace;padding:2px 6px;border-radius:3px;display:inline-block}
+.t-definition{background:#1e3a5f;color:#60a5fa}
+.t-scenario{background:#3b1a3a;color:#d946ef}
+.t-personal_anchor{background:#052e16;color:#4ade80}
+.t-numerical{background:#2d1b69;color:#a78bfa}
+.t-contradiction{background:#450a0a;color:#f87171}
+.t-warmup{background:#1c1917;color:#a8a29e}
+.t-why_probe{background:#431407;color:#fb923c}
+.t-practical_example{background:#0c1a2e;color:#60a5fa}
+.t-recovery_probe{background:#052e16;color:#4ade80}
+.answer-cell{font-size:12px;color:var(--g500);max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.answer-cell:hover{white-space:normal;overflow:visible;background:var(--g100);border-radius:4px;padding:4px}
+
+/* ANTICHEAT LOG */
+.ac-list{display:flex;flex-direction:column;gap:8px}
+.ac-item{background:var(--g100);border-radius:8px;padding:12px 16px;border-left:3px solid}
+.ac-tab_switch{border-color:var(--yl)}
+.ac-paste_event{border-color:var(--rd)}
+.ac-window_blur{border-color:var(--g300)}
+.ac-dom_overlay{border-color:var(--pu)}
+.ac-canary_triggered{border-color:var(--pu)}
+.ac-screen_share{border-color:var(--rd)}
+.ac-type{font-size:11px;font-weight:700;font-family:'DM Mono',monospace;text-transform:uppercase}
+.ac-meta{font-size:12px;color:var(--g400);margin-top:3px}
+
+/* BEHAVIORAL BASELINE */
+.baseline-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.baseline-card{background:var(--g100);border:1px solid var(--g200);border-radius:8px;padding:14px}
+.baseline-label{font-size:10px;color:var(--g400);font-family:'DM Mono',monospace;text-transform:uppercase;letter-spacing:.5px}
+.baseline-val{font-size:20px;font-weight:700;font-family:'DM Mono',monospace;margin-top:4px;color:var(--acc)}
+
+/* SIGNAL TRACKER */
+.signal-list{display:flex;flex-direction:column;gap:6px}
+.signal-item{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--g100);border-radius:8px}
+.signal-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.signal-dot.active{background:var(--rd);box-shadow:0 0 6px var(--rd)}
+.signal-dot.inactive{background:var(--g300)}
+.signal-name{font-size:13px;flex:1}
+.signal-detail{font-size:11px;color:var(--g400);font-family:'DM Mono',monospace}
+
+/* SCORE TIMELINE */
+.score-timeline{display:flex;align-items:flex-end;gap:6px;height:120px;padding:10px 0}
+.score-bar-wrap{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.score-bar-inner{width:100%;border-radius:4px 4px 0 0;transition:height .3s;min-height:4px}
+.score-turn-lbl{font-size:9px;color:var(--g400);font-family:'DM Mono',monospace}
+
+/* CONTRADICTION + RECOVERY */
+.check-list{display:flex;flex-direction:column;gap:8px}
+.check-item{background:var(--g100);border-radius:8px;padding:12px 16px;border-left:3px solid}
+.check-ok{border-color:var(--gr)}.check-fail{border-color:var(--rd)}
+.check-title{font-size:13px;font-weight:600}
+.check-detail{font-size:12px;color:var(--g400);margin-top:3px}
+
+/* EMPTY STATE */
+.empty{text-align:center;padding:60px 20px;color:var(--g400)}
+.empty-icon{font-size:40px;margin-bottom:12px}
+.empty-text{font-size:15px}
+.empty-sub{font-size:13px;margin-top:6px}
+
+/* LIVE INDICATOR */
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--gr);display:inline-block;margin-right:6px;animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-title">VLSI Admin</div>
+      <div class="sidebar-sub">Real-time session inspector</div>
+      <button class="refresh-btn" onclick="loadSessions()">&#8635; Refresh Sessions</button>
+    </div>
+    <div class="session-list" id="session-list">
+      <div class="no-sessions">No active sessions.<br>Start an interview to see data here.</div>
+    </div>
+    <div class="auto-refresh">
+      <input type="checkbox" id="auto-refresh-chk" onchange="toggleAutoRefresh(this.checked)">
+      <label for="auto-refresh-chk">Auto-refresh every 5s</label>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main" id="main-panel">
+    <div class="empty">
+      <div class="empty-icon">&#128269;</div>
+      <div class="empty-text">Select a session to inspect</div>
+      <div class="empty-sub">Start an interview at <a href="/" style="color:var(--acc)">localhost:8001</a> then select the session here</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let currentSessionId = null;
+let autoRefreshInterval = null;
+
+// ── LOAD SESSIONS ──────────────────────────────
+async function loadSessions() {
+  try {
+    const r = await fetch('/api/admin/sessions');
+    const sessions = await r.json();
+    const list = document.getElementById('session-list');
+    if (!sessions.length) {
+      list.innerHTML = '<div class="no-sessions">No active sessions.<br>Start an interview to see data.</div>';
+      return;
+    }
+    list.innerHTML = sessions.map(s => `
+      <div class="session-item ${s.session_id === currentSessionId ? 'active' : ''}"
+           onclick="selectSession('${s.session_id}')">
+        <div class="session-domain">${s.domain.replace('_',' ')} / ${s.level.replace('_',' ')}</div>
+        <div class="session-meta">Turn ${s.turn} | Score ${s.avg_score} | ${s.phase}</div>
+        <div class="session-badges">
+          ${s.smooth_talker ? '<span class="badge badge-danger">Smooth Talker</span>' : ''}
+          ${s.signal_count >= 7 ? '<span class="badge badge-danger">CRITICAL</span>' : s.signal_count >= 3 ? '<span class="badge badge-warn">'+s.signal_count+' signals</span>' : '<span class="badge badge-ok">'+s.signal_count+' signals</span>'}
+          ${s.anticheat_count > 0 ? '<span class="badge badge-warn">'+s.anticheat_count+' AC events</span>' : ''}
+          <span class="badge badge-info">${s.trajectory.replace('_',' ')}</span>
+        </div>
+      </div>`).join('');
+  } catch(e) {
+    console.error('Failed to load sessions:', e);
+  }
+}
+
+async function selectSession(sid) {
+  currentSessionId = sid;
+  loadSessions(); // refresh sidebar highlights
+  await loadSessionDetail(sid);
+}
+
+// ── LOAD SESSION DETAIL ────────────────────────
+async function loadSessionDetail(sid) {
+  try {
+    const r = await fetch(`/api/admin/session/${sid}`);
+    const d = await r.json();
+    renderDashboard(d);
+  } catch(e) {
+    document.getElementById('main-panel').innerHTML = '<div class="empty"><div class="empty-text" style="color:red">Error loading session</div></div>';
+  }
+}
+
+// ── RENDER DASHBOARD ───────────────────────────
+function renderDashboard(d) {
+  const scored = d.turn_log.filter(t => t.quality && t.quality !== 'warmup');
+  const scores = scored.map(t => parseInt(t.score) || 0);
+  const avgScore = scores.length ? Math.round(scores.reduce((a,b)=>a+b,0)/scores.length*10) : 0;
+  const acCount = d.anticheat_log.length;
+  const smoothDetected = d.smooth_talker_detected;
+
+  // Stat cards
+  const statGrid = `<div class="stat-grid">
+    <div class="stat-card">
+      <div class="stat-label">Avg Tech Score</div>
+      <div class="stat-val ${avgScore>=70?'green':avgScore>=50?'yellow':'red'}">${avgScore}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Turn</div>
+      <div class="stat-val blue">${d.turn} / 22</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Suspicion Signals</div>
+      <div class="stat-val ${d.signal_count>=7?'red':d.signal_count>=3?'yellow':'green'}">${d.signal_count}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Anti-Cheat Events</div>
+      <div class="stat-val ${acCount>0?'yellow':'green'}">${acCount}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Smooth Talker</div>
+      <div class="stat-val ${smoothDetected?'red':'green'}">${smoothDetected?'YES':'NO'}</div>
+    </div>
+  </div>`;
+
+  // Tabs
+  const tabs = `<div class="tabs">
+    <div class="tab active" onclick="switchTab('turns',this)">Turn Log</div>
+    <div class="tab" onclick="switchTab('anticheat',this)">Anti-Cheat</div>
+    <div class="tab" onclick="switchTab('behavioral',this)">Behavioral</div>
+    <div class="tab" onclick="switchTab('signals',this)">Signals</div>
+    <div class="tab" onclick="switchTab('contradiction',this)">Contradiction</div>
+    <div class="tab" onclick="switchTab('recovery',this)">Recovery</div>
+    <div class="tab" onclick="switchTab('notable',this)">Notable</div>
+  </div>`;
+
+  // Turn log
+  const turnRows = d.turn_log.map(t => {
+    const qColor = t.quality==='strong'?'score-strong':t.quality==='adequate'?'score-adequate':t.quality==='weak'?'score-weak':t.quality==='honest_admission'?'score-honest':'score-warmup';
+    const qColor2 = t.quadrant==='genuine_expert'?'quadrant-ge':t.quadrant==='genuine_nervous'?'quadrant-gn':t.quadrant==='dangerous_fake'?'quadrant-df':t.quadrant==='honest_confused'?'quadrant-hc':'';
+    const flags = (t.behavioral_flags||[]).map(f=>`<span class="flag-tag">${f.replace(/_/g,' ')}</span>`).join('');
+    const acFlags = [];
+    if(t.above_level) acFlags.push('<span class="flag-tag ok">above level</span>');
+    if(t.contradiction_inconsistency) acFlags.push('<span class="flag-tag">contradiction!</span>');
+    return `<tr>
+      <td class="mono" style="color:var(--g400)">${t.turn}</td>
+      <td><span class="type-tag t-${t.question_type||'warmup'}">${(t.question_type||'warmup').replace('_',' ')}</span></td>
+      <td style="color:var(--acc);font-size:12px">${esc(t.topic)}</td>
+      <td><span class="badge badge-info" style="font-size:10px">${t.difficulty}</span></td>
+      <td style="max-width:200px;font-size:12px;color:var(--g500)">${esc(t.question.substring(0,80))}${t.question.length>80?'...':''}</td>
+      <td class="answer-cell" title="${esc(t.answer)}">${esc((t.answer||'—').substring(0,60))}${(t.answer||'').length>60?'...':''}</td>
+      <td class="score-cell ${qColor}">${t.score||'—'}</td>
+      <td class="mono" style="font-size:11px;color:var(--g400)">${t.quality||'—'}</td>
+      <td class="${qColor2}">${(t.quadrant||'—').replace('_',' ')}</td>
+      <td class="mono" style="font-size:11px">${t.confidence_level||'—'}</td>
+      <td>${t.input_mode==='voice'?'&#127908;':'&#9000;'} ${t.word_count}w ${t.answer_duration_sec}s</td>
+      <td class="mono" style="font-size:11px">${t.filler_rate} / ${t.pronoun_rate}</td>
+      <td>${flags}${acFlags.join('')}</td>
+      <td style="font-size:11px;color:var(--g400);max-width:150px">${esc((t.notes||'').substring(0,60))}</td>
+    </tr>`;
+  }).join('');
+
+  const turnTab = `<div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>T#</th><th>Type</th><th>Topic</th><th>Diff</th><th>Question</th><th>Answer</th>
+        <th>Score</th><th>Quality</th><th>Quadrant</th><th>Conf</th><th>Input</th><th>Filler/Pronoun</th><th>Flags</th><th>Notes</th>
+      </tr></thead>
+      <tbody>${turnRows||'<tr><td colspan="14" style="text-align:center;color:var(--g400);padding:20px">No turns yet</td></tr>'}</tbody>
+    </table>
+  </div>`;
+
+  // Anti-cheat log
+  const acItems = d.anticheat_log.map(ev => `
+    <div class="ac-item ac-${ev.event_type}">
+      <div class="ac-type">${ev.event_type.replace(/_/g,' ')}</div>
+      <div class="ac-meta">Turn ${ev.turn} | ${ev.metadata||'no metadata'} | ${new Date(ev.timestamp*1000).toLocaleTimeString()}</div>
+    </div>`).join('') || '<div style="color:var(--g400);padding:20px;text-align:center">No anti-cheat events detected — clean session so far</div>';
+
+  // Behavioral baseline
+  const bl = d.behavioral_baseline;
+  const baselineHtml = bl && bl.sample_size > 0 ? `
+    <div class="baseline-grid">
+      <div class="baseline-card"><div class="baseline-label">Avg Duration</div><div class="baseline-val">${bl.avg_duration_sec?.toFixed(1)||0}s</div></div>
+      <div class="baseline-card"><div class="baseline-label">Avg Word Count</div><div class="baseline-val">${bl.avg_word_count?.toFixed(0)||0}</div></div>
+      <div class="baseline-card"><div class="baseline-label">Avg Filler Rate</div><div class="baseline-val">${bl.avg_filler_rate?.toFixed(3)||0}</div></div>
+      <div class="baseline-card"><div class="baseline-label">Avg Pronoun Rate</div><div class="baseline-val">${bl.avg_pronoun_rate?.toFixed(3)||0}</div></div>
+      <div class="baseline-card"><div class="baseline-label">Avg Think Pause</div><div class="baseline-val">${bl.avg_thinking_pause?.toFixed(1)||0}s</div></div>
+      <div class="baseline-card"><div class="baseline-label">Voice Baseline</div><div class="baseline-val" style="font-size:14px">${bl.has_voice?'Yes':'Text only'}</div></div>
+    </div>
+    <div style="margin-top:16px">
+      <div style="font-size:12px;color:var(--g400);margin-bottom:8px;font-family:'DM Mono',monospace">SCORE TIMELINE (by turn)</div>
+      <div class="score-timeline">${d.raw_scores.map(rs=>{
+        const h=Math.round((rs.score/10)*100);
+        const c=rs.score>=8?'var(--gr)':rs.score>=6?'var(--yl)':'var(--rd)';
+        return `<div class="score-bar-wrap"><div class="score-bar-inner" style="height:${h}%;background:${c}" title="${rs.topic}: ${rs.score}/10 (${rs.quadrant})"></div><div class="score-turn-lbl">T${rs.turn}</div></div>`;
+      }).join('')}</div>
+    </div>` : '<div style="color:var(--g400);padding:20px;text-align:center">Baseline computed after 2 warmup answers</div>';
+
+  // Smooth talker signals
+  const stSignals = d.smooth_talker_signals.length ? d.smooth_talker_signals.map(s=>`
+    <div class="ac-item" style="border-left-color:var(--rd)"><div class="ac-type" style="color:var(--rd)">Smooth Talker Signal</div><div class="ac-meta">${s}</div></div>`).join('') : '<div style="color:var(--gr);padding:16px">No smooth talker signals detected</div>';
+
+  // Active signals
+  const signalDefs = [
+    {key:'tab_switch', label:'Tab Switch', check: d.anticheat_log.some(e=>e.event_type==='tab_switch')},
+    {key:'paste', label:'Paste Event', check: d.anticheat_log.some(e=>e.event_type==='paste_event')},
+    {key:'dom_overlay', label:'DOM Overlay / Canary', check: d.anticheat_log.some(e=>['dom_overlay','canary_triggered'].includes(e.event_type))},
+    {key:'screen_share', label:'Screen Share', check: d.anticheat_log.some(e=>e.event_type==='screen_share')},
+    {key:'clean_speech', label:'Filler Words Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('suspiciously_clean_speech'))},
+    {key:'pronoun', label:'Pronouns Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('personal_pronouns_vanished'))},
+    {key:'pause_var', label:'Low Pause Variance', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('low_pause_variance'))},
+    {key:'correction', label:'Self-Corrections Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('self_corrections_vanished'))},
+    {key:'smooth', label:'Smooth Talker Confirmed', check: d.smooth_talker_detected},
+    {key:'zero_honest', label:'Zero Honest Admissions', check: d.turn_log.filter(t=>t.quality==='honest_admission').length===0 && d.turn_log.filter(t=>t.quality&&t.quality!=='warmup').length>=8},
+    {key:'df_pattern', label:'Dangerous Fake Quadrant (3+)', check: d.turn_log.filter(t=>t.quadrant==='dangerous_fake').length>=3},
+    {key:'contradiction', label:'Contradiction Detected', check: d.contradiction_log.some(c=>c.inconsistent)},
+    {key:'above_level', label:'Answer Complexity Above Level', check: d.turn_log.some(t=>t.above_level)},
+    {key:'perfect_recovery', label:'Perfect Recovery After Hint', check: (d.suspicion_events||[]).some(e=>e.type==='perfect_recovery_after_hint')},
+  ];
+  const signalsHtml = `<div class="signal-list">
+    ${signalDefs.map(sig=>`
+      <div class="signal-item">
+        <div class="signal-dot ${sig.check?'active':'inactive'}"></div>
+        <div class="signal-name">${sig.label}</div>
+        <div class="signal-detail">${sig.check?'ACTIVE':'not triggered'}</div>
+      </div>`).join('')}
+    <div style="margin-top:12px;padding:12px;background:var(--g100);border-radius:8px;font-family:'DM Mono',monospace">
+      <span style="color:var(--g400);font-size:11px">TOTAL ACTIVE SIGNALS: </span>
+      <span style="font-size:18px;font-weight:700;color:${d.signal_count>=7?'var(--rd)':d.signal_count>=3?'var(--yl)':'var(--gr)'}">${d.signal_count} / 14</span>
+      ${d.signal_count>=7?'<span style="color:var(--rd);font-weight:700;margin-left:12px">CRITICAL THRESHOLD REACHED</span>':''}
+    </div>
+  </div>`;
+
+  // Contradiction log
+  const contHtml = d.contradiction_log.length ? `<div class="check-list">
+    ${d.contradiction_log.map(c=>`
+      <div class="check-item ${c.inconsistent?'check-fail':'check-ok'}">
+        <div class="check-title">${c.topic} — ${c.status.replace('_',' ')} ${c.inconsistent?'&#9888; INCONSISTENT':'&#10003; Consistent'}</div>
+        <div class="check-detail">Angle 1 score: ${c.angle1_score||'N/A'}/10 | Angle 1 accuracy: ${c.angle1_accuracy||'N/A'}</div>
+      </div>`).join('')}
+  </div>` : '<div style="color:var(--g400);padding:20px;text-align:center">No contradiction pairs triggered yet (fires after turn 6)</div>';
+
+  // Recovery log
+  const recHtml = d.recovery_log.length ? `<div class="check-list">
+    ${d.recovery_log.map(h=>`
+      <div class="check-item ${h.recovery_quality==='complete'?'check-ok':h.recovery_quality==='none'?'check-fail':''}">
+        <div class="check-title">Turn ${h.turn} — ${h.topic}</div>
+        <div class="check-detail">Hint: "${h.hint_text||'given'}" | Recovery: ${h.recovery_quality||'pending'} | Score: ${h.recovery_score||'pending'}</div>
+      </div>`).join('')}
+  </div>` : '<div style="color:var(--g400);padding:20px;text-align:center">No recovery events yet (fires after honest admission)</div>';
+
+  // Notable moments
+  const notableHtml = d.notable_moments.length ? `<div class="check-list">
+    ${d.notable_moments.map(m=>`
+      <div class="check-item ${m.moment_type==='positive_signal'?'check-ok':'check-fail'}">
+        <div class="check-title">${m.moment_type==='positive_signal'?'&#10003;':'&#9888;'} Turn ${m.turn}</div>
+        <div class="check-detail">${esc(m.detail)}</div>
+      </div>`).join('')}
+  </div>` : '<div style="color:var(--g400);padding:20px;text-align:center">No notable moments recorded yet</div>';
+
+  document.getElementById('main-panel').innerHTML = `
+    <div class="page-header">
+      <div class="page-title"><span class="live-dot"></span>${d.resume.domain.replace(/_/g,' ')} — ${d.resume.level.replace(/_/g,' ')}</div>
+      <div class="page-sub mono" style="font-size:11px;margin-top:4px;color:var(--g400)">Session: ${d.session_id} | Phase: ${d.phase} | Difficulty: ${['foundational','basic','intermediate','advanced','expert'][d.difficulty_level]||d.difficulty_level} | Trajectory: ${d.trajectory}</div>
+    </div>
+    ${statGrid}
+    ${tabs}
+    <div id="tab-turns" class="tab-content active">${turnTab}</div>
+    <div id="tab-anticheat" class="tab-content"><div class="ac-list">${acItems}</div></div>
+    <div id="tab-behavioral" class="tab-content">${baselineHtml}<div style="margin-top:20px"><div style="font-size:12px;color:var(--g400);margin-bottom:8px;font-family:'DM Mono',monospace">SMOOTH TALKER SIGNALS</div>${stSignals}</div></div>
+    <div id="tab-signals" class="tab-content">${signalsHtml}</div>
+    <div id="tab-contradiction" class="tab-content">${contHtml}</div>
+    <div id="tab-recovery" class="tab-content">${recHtml}</div>
+    <div id="tab-notable" class="tab-content">${notableHtml}</div>`;
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-'+name).classList.add('active');
+}
+
+function toggleAutoRefresh(on) {
+  clearInterval(autoRefreshInterval);
+  if(on) {
+    autoRefreshInterval = setInterval(async () => {
+      await loadSessions();
+      if(currentSessionId) await loadSessionDetail(currentSessionId);
+    }, 5000);
+  }
+}
+
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// Initial load
+loadSessions();
+</script>
+</body>
+</html>
