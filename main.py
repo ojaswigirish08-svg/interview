@@ -26,9 +26,10 @@ sessions: dict = {}
 # ════════════════════════════════════════════════════════════
 from groq import Groq
 import boto3
-import whisper
+from openai import OpenAI
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 polly_client = boto3.client(
     "polly",
     region_name=os.getenv("AWS_REGION", "us-east-1"),
@@ -36,10 +37,7 @@ polly_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
-WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "base")
-print(f"Loading Whisper [{WHISPER_MODEL_SIZE}]...")
-whisper_model = whisper.load_model(WHISPER_MODEL_SIZE)
-print("Whisper ready.")
+print("OpenAI Whisper API ready.")
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -941,10 +939,10 @@ def synthesize_speech(text: str) -> str:
         return ""
 
 # ════════════════════════════════════════════════════════════
-# STT — Whisper with ffmpeg conversion
+# STT — OpenAI Whisper API
 # ════════════════════════════════════════════════════════════
 def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
-    """Transcribe using local Whisper. Converts to wav first via ffmpeg."""
+    """Transcribe using OpenAI Whisper API."""
     import subprocess
 
     # Save incoming audio
@@ -952,44 +950,61 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
         f.write(audio_bytes)
         tmp_input = f.name
 
-    # Convert to wav for reliable Whisper processing
-    tmp_wav = tmp_input.replace(f".{ext}", ".wav")
+    # Convert to mp3 for reliable OpenAI Whisper processing
+    tmp_mp3 = tmp_input.rsplit(".", 1)[0] + ".mp3"
     try:
         result = subprocess.run(
             ["ffmpeg", "-y", "-i", tmp_input,
-             "-ar", "16000", "-ac", "1", "-f", "wav", tmp_wav],
+             "-ar", "16000", "-ac", "1", "-b:a", "64k", tmp_mp3],
             capture_output=True, timeout=30
         )
-        if result.returncode == 0 and os.path.exists(tmp_wav):
-            transcribe_path = tmp_wav
+        if result.returncode == 0 and os.path.exists(tmp_mp3):
+            transcribe_path = tmp_mp3
+            print(f"Converted to mp3: {os.path.getsize(tmp_mp3)} bytes")
         else:
-            print(f"ffmpeg failed, using original: {result.stderr.decode()[:100]}")
+            print(f"ffmpeg failed: {result.stderr.decode()[:200]}")
             transcribe_path = tmp_input
     except Exception as e:
         print(f"ffmpeg error: {e}, using original")
         transcribe_path = tmp_input
 
     try:
-        result = whisper_model.transcribe(
-            transcribe_path, language="en", fp16=False
-        )
-        transcript = result["text"].strip()
-        print(f"Whisper: '{transcript[:80]}' | segments: {len(result.get('segments', []))}")
+        with open(transcribe_path, "rb") as audio_file:
+            # Use OpenAI Whisper API
+            response = openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="en",
+                response_format="verbose_json"
+            )
+
+        transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+
+        # Calculate average confidence from segments if available
+        avg_confidence = 1.0
+        if hasattr(response, 'segments') and response.segments:
+            confidences = [seg.get('avg_logprob', 0) for seg in response.segments if isinstance(seg, dict)]
+            if confidences:
+                # Convert log prob to rough confidence (logprob is negative, closer to 0 is better)
+                avg_confidence = min(1.0, max(0.0, 1.0 + sum(confidences) / len(confidences) / 2))
+
+        print(f"OpenAI Whisper: '{transcript[:80]}' | confidence: {avg_confidence:.2f}")
+
         return {
             "transcript": transcript,
-            "avg_confidence": 1.0,
-            "low_confidence": False,
+            "avg_confidence": avg_confidence,
+            "low_confidence": avg_confidence < 0.5,
             "corrupted_terms": [],
             "needs_repeat": len(transcript.strip()) == 0
         }
     except Exception as e:
-        print(f"Whisper error: {e}")
+        print(f"OpenAI Whisper error: {e}")
         return {"transcript": "", "avg_confidence": 0.0, "low_confidence": True,
                 "corrupted_terms": [], "needs_repeat": False}
     finally:
         try: os.unlink(tmp_input)
         except: pass
-        try: os.unlink(tmp_wav)
+        try: os.unlink(tmp_mp3)
         except: pass
 
 

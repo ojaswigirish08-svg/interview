@@ -3,7 +3,7 @@ uvicorn==0.30.1
 python-dotenv==1.0.1
 groq==0.8.0
 boto3==1.34.131
-openai-whisper==20231117
+openai>=1.0.0
 pdfplumber==0.11.0
 docx2txt==0.8
 python-multipart==0.0.9
