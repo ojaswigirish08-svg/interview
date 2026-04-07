@@ -1027,76 +1027,105 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     # Force decision after 3 questions
     must_decide = warmup_count >= 2  # After 2 questions asked, this is the 3rd response
 
-    prompt = f"""You are a friendly VLSI interviewer conducting a WARMUP session.
-STRICT LIMIT: Only 2-3 warmup questions total. You have asked {warmup_count} questions so far.
+    # Build list of previously asked questions
+    prev_questions = [h["question"] for h in session.get("history", []) if h.get("question")]
+    prev_questions_text = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None"
+
+    prompt = f"""You are the Warmup Agent. Your job is to ask simple questions based on user skills.
 
 Candidate Name: {candidate_name}
-Candidate Skills: {skills_text}
-Candidate Projects: {projects_text}
-Experience Level: {level}
-Domain: {domain}
+User Skills: {skills_text}
 
-Skills already asked about: {', '.join(warmup_skills_asked) if warmup_skills_asked else 'None yet'}
-MUST ask about one of these remaining skills: {', '.join(remaining_skills[:5]) if remaining_skills else skills_text}
+Previously Asked Questions:
+{prev_questions_text}
 
-{"This is the START. First GREET the candidate warmly by their name (e.g., 'Hello [Name]! Welcome to the interview.'). Then ask your FIRST simple question based on ONE of their listed skills." if is_first_warmup else f"This is question {warmup_count + 1} of 3. Evaluate their last answer."}
+{"Greet the candidate by name first, then ask a simple question." if is_first_warmup else "Ask the next question."}
 
-{"**CRITICAL: This is your LAST warmup response. You MUST make a final decision NOW based on all answers so far.**" if must_decide else ""}
-
-WARMUP RULES:
-- RANDOMLY pick a DIFFERENT skill from the candidate's list for each question
-- Generate a UNIQUE basic/fundamental question about that skill
-- DO NOT repeat the same question type - vary your questions!
-- For each skill, there are MANY possible basic questions - pick different ones each time
-- Questions should test basic understanding, not advanced concepts
-
-{"MAKE YOUR FINAL DECISION NOW:" if must_decide else "After evaluating their answer:"}
-1. If answers were GOOD: Say "Great! You seem well prepared. Let's begin the technical interview." (warmup_decision: "start_interview")
-2. If answers were PARTIAL or POOR: Say "Let's proceed with the interview. Don't worry, this is just practice!" (warmup_decision: "start_interview")
-
-IMPORTANT: NEVER use "end_not_ready" - warmup is just to make the candidate comfortable, not to reject them.
-
-Previous Conversation:
-{conversation_text}
-
-{f"Candidate's latest answer: {candidate_answer}" if candidate_answer else ""}
+Rules:
+- Ask ONE simple, basic question about ONE skill
+- Pick a DIFFERENT skill each time
+- Generate a RANDOM question (vary the question type)
+- Keep it short and conversational
+- No emojis
 
 Return ONLY this JSON:
 {{
-  "question": "your warmup question or decision statement",
-  "skill_asked": "the specific skill this question is about",
-  "warmup_decision": "continue" or "start_interview",
-  "performance_assessment": "good" or "partial" or "pending"
+  "question": "your question",
+  "skill_asked": "skill name"
 }}
-
-Important:
-- No emojis
-- Keep responses conversational and short
-- Questions MUST be from candidate's OWN skills
-- Do NOT include labels like "AI_Voice:" or "Interviewer:"
-{"- YOU MUST END WITH A DECISION - no more questions allowed!" if must_decide else ""}
 """
 
     # Higher temperature for more varied questions
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=500)
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=300)
 
     if not result or "question" not in result:
         # Fallback - pick a random skill
         import random
         skill = random.choice(remaining_skills) if remaining_skills else (all_skills[0] if all_skills else "VLSI")
+        question = f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?" if is_first_warmup else f"Can you tell me about {skill}?"
         return {
-            "question": f"Hello {candidate_name}! Welcome to the interview. I'm excited to speak with you today. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
+            "question": question,
             "question_type": "warmup",
-            "skill_asked": skill,
-            "warmup_decision": "continue",
-            "performance_assessment": "pending"
+            "skill_asked": skill
         }
 
     # Track which skill was asked to avoid repetition
-    if result.get("skill_asked") and result.get("warmup_decision") == "continue":
+    if result.get("skill_asked"):
         session.setdefault("warmup_skills_asked", []).append(result["skill_asked"])
 
     result["question_type"] = "warmup"
+    return result
+
+# ════════════════════════════════════════════════════════════
+# WARMUP EVALUATOR - Evaluates answers and decides to continue or not
+# ════════════════════════════════════════════════════════════
+def evaluate_warmup_answer(session: dict, candidate_answer: str) -> dict:
+    """Evaluates warmup answer and decides whether to continue interview or not"""
+
+    warmup_count = session.get("warmup_turns", 0)
+    history = session.get("history", [])
+
+    # Build Q&A pairs for evaluation
+    qa_pairs = []
+    for h in history:
+        if h.get("question") and h.get("answer"):
+            qa_pairs.append(f"Q: {h['question']}\nA: {h['answer']}")
+    qa_text = "\n\n".join(qa_pairs) if qa_pairs else "No answers yet"
+
+    prompt = f"""You are the Warmup Evaluator. Evaluate the candidate's warmup answers and decide if they should continue to the interview.
+
+Warmup Q&A:
+{qa_text}
+
+Latest Answer: {candidate_answer}
+
+Questions Asked: {warmup_count}
+
+Rules:
+- If candidate answered {warmup_count} questions, make a decision
+- If answers show basic understanding: decision = "start_interview"
+- If answers are poor but candidate tried: decision = "start_interview" (give them a chance)
+- Only use "end_not_ready" if candidate is completely unable to answer anything
+- Warmup is to make candidates comfortable, not to reject them
+
+Return ONLY this JSON:
+{{
+  "decision": "continue" or "start_interview" or "end_not_ready",
+  "performance": "good" or "partial" or "poor",
+  "feedback": "short feedback message to candidate"
+}}
+"""
+
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=200)
+
+    if not result:
+        # Default: continue to interview
+        return {
+            "decision": "start_interview" if warmup_count >= 2 else "continue",
+            "performance": "partial",
+            "feedback": "Let's proceed with the interview!"
+        }
+
     return result
 
 # ════════════════════════════════════════════════════════════
@@ -1619,37 +1648,32 @@ async def submit_answer(data: AnswerSubmit):
         session["warmup_turns"] += 1
         session["warmup_conversation"].append(f"Candidate: {data.answer}")
 
-        # Generate warmup response/next question
-        result = generate_warmup_question(session, data.answer)
-        session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+        # Step 1: Evaluate the warmup answer using Evaluator Agent
+        eval_result = evaluate_warmup_answer(session, data.answer)
+        warmup_decision = eval_result.get("decision", "continue")
+        session["warmup_performance"] = eval_result.get("performance", "partial")
 
-        # Handle warmup decision
-        warmup_decision = result.get("warmup_decision", "continue")
-
-        # Safety: Never end interview during warmup - convert to start_interview
+        # Safety: Never end interview during warmup
         if warmup_decision == "end_not_ready":
-            print("[Warmup] Converting end_not_ready to start_interview - warmup should not reject candidates")
+            print("[Warmup] Converting end_not_ready to start_interview")
             warmup_decision = "start_interview"
-            result["question"] = "Let's proceed with the interview. Don't worry, this is just practice to help you improve!"
+
+        # Hard limit: Force interview start after 3 warmup questions
+        if session["warmup_turns"] >= 3 and warmup_decision == "continue":
+            print("[Warmup] Hard limit reached - forcing interview start")
+            warmup_decision = "start_interview"
 
         if warmup_decision == "start_interview":
+            # Transition to interview
             session["phase"] = "interview"
-            session["warmup_performance"] = result.get("performance_assessment", "partial")
             compute_baseline(session)
             # Generate first interview question
             result = generate_question(session)
-
-        elif warmup_decision == "ask_ready":
-            session["phase"] = "ready_check"
-            session["warmup_performance"] = "partial"
-
-        # Hard limit: Force interview start after 3 warmup questions
-        elif session["warmup_turns"] >= 3:
-            print("[Warmup] Hard limit reached - forcing interview start")
-            session["phase"] = "interview"
-            session["warmup_performance"] = "partial"
-            compute_baseline(session)
-            result = generate_question(session)
+            result["warmup_feedback"] = eval_result.get("feedback", "Let's begin the technical interview!")
+        else:
+            # Step 2: Generate next warmup question using Warmup Agent
+            result = generate_warmup_question(session, data.answer)
+            session["warmup_conversation"].append(f"Interviewer: {result['question']}")
 
     elif session["phase"] == "ready_check":
         # User responded to "are you ready?" question
