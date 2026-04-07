@@ -878,6 +878,13 @@ INTELLECTUAL HONESTY: "I don't know" = 6/10, warm response. "I don't know + reas
 POOR ARTICULATION: correct terms but incomplete = quality "poor_articulation", ask practical_example next.
 UNCONVENTIONAL ANSWER: if technically defensible, score defensibility not format. Set accuracy="correct".
 
+PARTIAL ANSWER HANDLING:
+- If the question has multiple expected answer points (e.g., 3 parts) and candidate answers only some:
+  - Set accuracy="partial"
+  - List ALL expected points in "expected_points" (what a complete answer should include)
+  - List ONLY the missed points in "missing_points" (what was not covered)
+  - The next question will give a hint about the missing points
+
 RETURN ONLY VALID JSON:
 {{
   "question": "Spoken conversational question, max 2 sentences",
@@ -891,40 +898,92 @@ RETURN ONLY VALID JSON:
     "accuracy": "correct|partial|wrong|not_applicable",
     "confidence_level": "high|medium|low",
     "quadrant": "genuine_expert|genuine_nervous|dangerous_fake|honest_confused",
+    "expected_points": ["point 1", "point 2", "point 3"],
+    "missing_points": ["points the candidate missed"],
     "score": 5,
     "score_reasoning": "one sentence",
     "notes": "specific observation"
   }}
 }}
-First question: evaluation=null. Warmup: quality="warmup", score=null."""
+First question: evaluation=null. Warmup: quality="warmup", score=null.
+For expected_points/missing_points: include them whenever accuracy is "partial" or quality is "adequate"."""
 
 def generate_question(session: dict, candidate_answer: str = None) -> dict:
     q_type, extra = decide_question_type(session)
+    resume = session.get("resume", {})
+
+    # Get all skills to cover randomly
+    all_skills = resume.get("skills", []) + resume.get("tools", [])
+    skills_covered = session.get("skills_covered_in_interview", [])
+
+    # Pick a skill to focus on (prioritize uncovered skills)
+    import random
+    uncovered = [s for s in all_skills if s not in skills_covered]
+    if uncovered:
+        current_skill = random.choice(uncovered)
+    elif all_skills:
+        current_skill = random.choice(all_skills)
+    else:
+        current_skill = None
+
     sys_prompt = build_system_prompt(session, q_type, extra)
 
+    # Build messages: ALL questions + LAST 5 answers only
     messages = [{"role": "system", "content": sys_prompt}]
-    for h in session.get("history", [])[-10:]:
+    history = session.get("history", [])
+
+    # Add all questions
+    for i, h in enumerate(history):
         messages.append({"role": "assistant", "content": h["question"]})
-        if h.get("answer"):
+        # Only include last 5 answers
+        if h.get("answer") and i >= len(history) - 5:
             messages.append({"role": "user", "content": h["answer"]})
 
+    # Add current answer if provided
     if candidate_answer:
         messages.append({"role": "user", "content": candidate_answer})
     else:
         messages.append({"role": "user", "content": "[START INTERVIEW]"})
 
+    # Add skill coverage instruction to prompt
+    skill_instruction = ""
+    if current_skill:
+        skill_instruction = f"\n\nFOCUS SKILL FOR THIS QUESTION: {current_skill}\nCover this skill in your question. Skills already covered: {', '.join(skills_covered) if skills_covered else 'None yet'}"
+
+    # Check if previous answer was partial and needs hint
+    hint_instruction = ""
+    last_entry = history[-1] if history else None
+    if last_entry and last_entry.get("evaluation"):
+        eval_data = last_entry.get("evaluation", {})
+        if eval_data.get("accuracy") == "partial" or eval_data.get("quality") == "adequate":
+            expected_points = eval_data.get("expected_points", [])
+            missing_points = eval_data.get("missing_points", [])
+            if missing_points:
+                hint_instruction = f"\n\nPREVIOUS ANSWER WAS PARTIAL. Missing points: {', '.join(missing_points)}. Give a hint about what was missed OR ask a follow-up to cover the missing part."
+
+    # Modify system prompt with skill and hint instructions
+    enhanced_prompt = sys_prompt + skill_instruction + hint_instruction
+
+    messages[0] = {"role": "system", "content": enhanced_prompt}
+
     result = call_llm_json(messages, temperature=0.65, max_tokens=700)
 
     if not result or "question" not in result:
-        fallback_topic = DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
+        fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
         return {
             "question": f"Can you explain {fallback_topic} in your own words?",
             "question_type": q_type, "topic": fallback_topic,
             "difficulty": DIFFICULTY_LABELS[session["difficulty_level"]],
-            "hint_given": False, "hint_text": None, "evaluation": None
+            "hint_given": False, "hint_text": None, "evaluation": None,
+            "current_skill": current_skill
         }
 
+    # Track skill coverage
+    if current_skill and current_skill not in skills_covered:
+        session.setdefault("skills_covered_in_interview", []).append(current_skill)
+
     result["question_type"] = q_type
+    result["current_skill"] = current_skill
     result["_extra"] = extra  # carry extra data for contradiction tracking
     return result
 
