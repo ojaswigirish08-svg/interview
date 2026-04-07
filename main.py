@@ -1009,6 +1009,12 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     level = resume.get("level", "trained_fresher")
     domain = resume.get("domain", "physical_design")
 
+    # Track skills already asked in warmup to avoid repetition
+    warmup_skills_asked = session.get("warmup_skills_asked", [])
+    remaining_skills = [s for s in all_skills if s not in warmup_skills_asked]
+    if not remaining_skills:
+        remaining_skills = all_skills  # Reset if all asked
+
     # Build conversation history
     conversation_parts = []
     for h in session.get("history", []):
@@ -1030,16 +1036,19 @@ Candidate Projects: {projects_text}
 Experience Level: {level}
 Domain: {domain}
 
+Skills already asked about: {', '.join(warmup_skills_asked) if warmup_skills_asked else 'None yet'}
+MUST ask about one of these remaining skills: {', '.join(remaining_skills[:5]) if remaining_skills else skills_text}
+
 {"This is the START. Greet warmly by name and ask your FIRST simple question based on ONE of their listed skills." if is_first_warmup else f"This is question {warmup_count + 1} of 3. Evaluate their last answer."}
 
 {"**CRITICAL: This is your LAST warmup response. You MUST make a final decision NOW based on all answers so far.**" if must_decide else ""}
 
 WARMUP RULES:
-- Ask questions ONLY based on the candidate's listed SKILLS
-- Questions should be BASIC/FUNDAMENTAL
-- Example: If skill is "Verilog" ask "What is the difference between blocking and non-blocking assignments?"
-- Example: If skill is "STA" ask "What is setup time and hold time?"
-- Example: If skill is "Cadence Virtuoso" ask "What is the purpose of DRC and LVS checks?"
+- RANDOMLY pick a DIFFERENT skill from the candidate's list for each question
+- Generate a UNIQUE basic/fundamental question about that skill
+- DO NOT repeat the same question type - vary your questions!
+- For each skill, there are MANY possible basic questions - pick different ones each time
+- Questions should test basic understanding, not advanced concepts
 
 {"MAKE YOUR FINAL DECISION NOW:" if must_decide else "After evaluating their answer:"}
 1. If answers were GOOD: Say "Great! You seem well prepared. Let's begin the technical interview."
@@ -1054,6 +1063,7 @@ Previous Conversation:
 Return ONLY this JSON:
 {{
   "question": "your warmup question or decision statement",
+  "skill_asked": "the specific skill this question is about",
   "warmup_decision": "continue" or "start_interview" or "ask_ready" or "end_not_ready",
   "performance_assessment": "good" or "partial" or "poor" or "pending"
 }}
@@ -1066,25 +1076,24 @@ Important:
 {"- YOU MUST END WITH A DECISION - no more questions allowed!" if must_decide else ""}
 """
 
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.5, max_tokens=500)
+    # Higher temperature for more varied questions
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=500)
 
     if not result or "question" not in result:
-        # Fallback
-        if is_first_warmup:
-            skill = all_skills[0] if all_skills else "VLSI"
-            return {
-                "question": f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
-                "question_type": "warmup",
-                "warmup_decision": "continue",
-                "performance_assessment": "pending"
-            }
-        else:
-            return {
-                "question": "Great! Let's proceed with the technical interview.",
-                "question_type": "warmup",
-                "warmup_decision": "start_interview",
-                "performance_assessment": "partial"
-            }
+        # Fallback - pick a random skill
+        import random
+        skill = random.choice(remaining_skills) if remaining_skills else (all_skills[0] if all_skills else "VLSI")
+        return {
+            "question": f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
+            "question_type": "warmup",
+            "skill_asked": skill,
+            "warmup_decision": "continue",
+            "performance_assessment": "pending"
+        }
+
+    # Track which skill was asked to avoid repetition
+    if result.get("skill_asked") and result.get("warmup_decision") == "continue":
+        session.setdefault("warmup_skills_asked", []).append(result["skill_asked"])
 
     result["question_type"] = "warmup"
     return result
