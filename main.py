@@ -1071,7 +1071,6 @@ Previously Asked Questions (DO NOT repeat these):
 
 Rules:
 - Don't mention initials of user name like B. R. - use their actual name
-- Ask simple "What is X?" questions only
 - No complex or scenario questions
 - No emojis
 
@@ -1103,57 +1102,6 @@ Return ONLY this JSON:
     result["question_type"] = "warmup"
     return result
 
-# ════════════════════════════════════════════════════════════
-# WARMUP EVALUATOR - Evaluates answers and decides to continue or not
-# ════════════════════════════════════════════════════════════
-def evaluate_warmup_answer(session: dict, candidate_answer: str) -> dict:
-    """Evaluates warmup answer and decides whether to continue interview or not"""
-
-    warmup_count = session.get("warmup_turns", 0)
-    history = session.get("history", [])
-
-    # Build Q&A pairs for evaluation
-    qa_pairs = []
-    for h in history:
-        if h.get("question") and h.get("answer"):
-            qa_pairs.append(f"Q: {h['question']}\nA: {h['answer']}")
-    qa_text = "\n\n".join(qa_pairs) if qa_pairs else "No answers yet"
-
-    prompt = f"""You are the Warmup Evaluator. Evaluate the candidate's warmup answers and decide if they should continue to the interview.
-
-Warmup Q&A:
-{qa_text}
-
-Latest Answer: {candidate_answer}
-
-Questions Asked: {warmup_count}
-
-Rules:
-- If candidate answered {warmup_count} questions, make a decision
-- If answers show basic understanding: decision = "start_interview"
-- If answers are poor but candidate tried: decision = "start_interview" (give them a chance)
-- Only use "end_not_ready" if candidate is completely unable to answer anything
-- Warmup is to make candidates comfortable, not to reject them
-
-Return ONLY this JSON:
-{{
-  "decision": "continue" or "start_interview" or "end_not_ready",
-  "performance": "good" or "partial" or "poor",
-  "feedback": "short feedback message to candidate"
-}}
-"""
-
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=200)
-
-    if not result:
-        # Default: continue to interview
-        return {
-            "decision": "start_interview" if warmup_count >= 2 else "continue",
-            "performance": "partial",
-            "feedback": "Let's proceed with the interview!"
-        }
-
-    return result
 
 # ════════════════════════════════════════════════════════════
 # TRAJECTORY ANALYSIS
@@ -1675,30 +1623,16 @@ async def submit_answer(data: AnswerSubmit):
         session["warmup_turns"] += 1
         session["warmup_conversation"].append(f"Candidate: {data.answer}")
 
-        # Step 1: Evaluate the warmup answer using Evaluator Agent
-        eval_result = evaluate_warmup_answer(session, data.answer)
-        warmup_decision = eval_result.get("decision", "continue")
-        session["warmup_performance"] = eval_result.get("performance", "partial")
-
-        # Safety: Never end interview during warmup
-        if warmup_decision == "end_not_ready":
-            print("[Warmup] Converting end_not_ready to start_interview")
-            warmup_decision = "start_interview"
-
-        # Hard limit: Force interview start after 3 warmup questions
-        if session["warmup_turns"] >= 3 and warmup_decision == "continue":
-            print("[Warmup] Hard limit reached - forcing interview start")
-            warmup_decision = "start_interview"
-
-        if warmup_decision == "start_interview":
+        # Simple logic: After 3 warmup questions, start the interview
+        if session["warmup_turns"] >= 3:
             # Transition to interview
             session["phase"] = "interview"
             compute_baseline(session)
             # Generate first interview question
             result = generate_question(session)
-            result["warmup_feedback"] = eval_result.get("feedback", "Let's begin the technical interview!")
+            result["warmup_feedback"] = "Let's begin the technical interview!"
         else:
-            # Step 2: Generate next warmup question using Warmup Agent
+            # Generate next warmup question
             result = generate_warmup_question(session, data.answer)
             session["warmup_conversation"].append(f"Interviewer: {result['question']}")
 
