@@ -1025,11 +1025,15 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     is_first_warmup = warmup_count == 0
 
     # Extract skills and info from resume
+    import random
     candidate_name = resume.get("candidate_name", "Candidate")
     skills = resume.get("skills", [])
     tools = resume.get("tools", [])
     all_skills = skills + tools
-    skills_text = ", ".join(all_skills[:10]) if all_skills else "VLSI concepts"
+    # Shuffle all skills for variety
+    shuffled_skills = all_skills.copy()
+    random.shuffle(shuffled_skills)
+    skills_text = ", ".join(shuffled_skills) if shuffled_skills else "VLSI concepts"
 
     projects = resume.get("key_projects", [])
     projects_text = ", ".join(projects[:3]) if projects else "VLSI projects"
