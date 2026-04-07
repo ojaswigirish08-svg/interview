@@ -320,8 +320,10 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
         <div class="pbox" id="pbox">
           <div id="pldr" style="text-align:center;color:var(--g400);font-size:14px;padding:10px">Analyzing resume...</div>
           <div id="pdata" style="display:none">
+            <div class="pr"><span class="pk">Name</span><span class="pv" id="p-name">-</span></div>
             <div class="pr"><span class="pk">Domain</span><span class="pv" id="p-domain">-</span></div>
             <div class="pr"><span class="pk">Level</span><span class="pv" id="p-level">-</span></div>
+            <div class="pr"><span class="pk">Skills</span><span class="pv" id="p-skills">-</span></div>
             <div class="pr"><span class="pk">Tools</span><span class="pv" id="p-tools">-</span></div>
             <div class="pr"><span class="pk">Education</span><span class="pv" id="p-edu">-</span></div>
           </div>
@@ -586,9 +588,11 @@ async function processResume(file) {
 
     const dm={analog_layout:'Analog Layout',physical_design:'Physical Design',design_verification:'Design Verification'};
     const lm={fresh_graduate:'Fresh Graduate',trained_fresher:'Trained Fresher',experienced_junior:'Exp. Junior (1-3yr)',experienced_senior:'Exp. Senior (3+yr)'};
+    document.getElementById('p-name').textContent=p.candidate_name||'Candidate';
     document.getElementById('p-domain').textContent=dm[p.domain]||p.domain;
     document.getElementById('p-level').textContent=lm[p.level]||p.level;
-    document.getElementById('p-tools').textContent=(p.tools||[]).slice(0,3).join(', ')||'N/A';
+    document.getElementById('p-skills').textContent=(p.skills||[]).slice(0,5).join(', ')||'N/A';
+    document.getElementById('p-tools').textContent=(p.tools||[]).slice(0,4).join(', ')||'N/A';
     document.getElementById('p-edu').textContent=p.education||'N/A';
     const btn=document.getElementById('btn-start');
     btn.disabled=false; btn.textContent='Start Interview';

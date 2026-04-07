@@ -228,42 +228,60 @@ def call_llm_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -
 # RESUME PARSER
 # ════════════════════════════════════════════════════════════
 def parse_resume(resume_text: str) -> dict:
-    prompt = f"""You are a VLSI expert HR analyst. Parse this resume and determine if it's suitable for a VLSI interview.
+    prompt = f"""You are a VLSI expert HR analyst. Parse this resume and extract candidate details.
 
 Resume:
 {resume_text[:4000]}
 
-First, check if this resume is related to VLSI/Semiconductor/Electronics domain. Look for:
-- VLSI-related keywords: RTL, Verilog, VHDL, SystemVerilog, ASIC, FPGA, SoC, Physical Design, DFT, Verification, Analog Layout, PnR, STA, Synthesis, Timing, Floorplan, Power, Clock, etc.
-- Semiconductor tools: Cadence, Synopsys, Mentor, ICC, ICC2, Innovus, Virtuoso, PrimeTime, Design Compiler, VCS, Questa, etc.
+TASKS:
+1. Extract the candidate's full name from the resume (usually at the top)
+2. Extract all technical skills mentioned in the resume
+3. Check if this resume is related to VLSI/Semiconductor/Electronics domain
+
+VLSI indicators to look for:
+- VLSI keywords: RTL, Verilog, VHDL, SystemVerilog, ASIC, FPGA, SoC, Physical Design, DFT, Verification, Analog Layout, PnR, STA, Synthesis, Timing, Floorplan, Power, Clock
+- Semiconductor tools: Cadence, Synopsys, Mentor, ICC, ICC2, Innovus, Virtuoso, PrimeTime, Design Compiler, VCS, Questa, Calibre, Assura
 - Electronics/ECE/EEE education background
 - Semiconductor company experience or training
 
 Return ONLY this JSON (no markdown):
 {{
+  "candidate_name": "Full Name from resume",
+  "email": "email if found or empty string",
+  "phone": "phone if found or empty string",
+  "skills": ["skill1", "skill2", "skill3"],
   "is_vlsi_suitable": true,
   "rejection_reason": "",
   "domain": "analog_layout",
   "level": "trained_fresher",
   "years_experience": 0,
   "tools": ["tool1"],
-  "key_projects": ["description"],
-  "background_summary": "2 concise sentences",
+  "key_projects": ["project description"],
+  "background_summary": "2 concise sentences about candidate",
   "training_institutes": ["institute"],
   "education": "degree and branch"
 }}
 
-is_vlsi_suitable: true if resume has VLSI/Semiconductor/Electronics background, false otherwise
-rejection_reason: If not suitable, explain briefly why (e.g., "Resume is for Software Development, not VLSI")
-domain: analog_layout | physical_design | design_verification (only if suitable)
-level: fresh_graduate | trained_fresher | experienced_junior | experienced_senior
-fresh_graduate=0yr, trained_fresher=0-1yr training/internship, experienced_junior=1-3yr, experienced_senior=3+yr"""
+FIELD INSTRUCTIONS:
+- candidate_name: Extract exact name from resume header (e.g., "Rahul Sharma", "Priya Singh")
+- skills: List ALL technical skills found (programming, tools, concepts, etc.)
+- is_vlsi_suitable: true if resume has VLSI/Semiconductor/Electronics background, false otherwise
+- rejection_reason: If not suitable, explain why (e.g., "Resume is for Software Development, not VLSI"). Empty string if suitable.
+- domain: analog_layout | physical_design | design_verification (classify based on skills/experience)
+- level: fresh_graduate (0yr) | trained_fresher (0-1yr) | experienced_junior (1-3yr) | experienced_senior (3+yr)"""
 
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=800)
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=1000)
     if result and "is_vlsi_suitable" in result:
+        # Ensure candidate_name exists
+        if "candidate_name" not in result or not result["candidate_name"]:
+            result["candidate_name"] = "Candidate"
         return result
     # Default: assume not suitable if parsing fails
     return {
+        "candidate_name": "Candidate",
+        "email": "",
+        "phone": "",
+        "skills": [],
         "is_vlsi_suitable": False,
         "rejection_reason": "Could not parse resume. Please upload a valid VLSI/Semiconductor resume.",
         "domain": "unknown", "level": "unknown",

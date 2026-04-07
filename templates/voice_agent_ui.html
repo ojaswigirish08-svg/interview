@@ -564,17 +564,10 @@
 
         const resume = data.resume;
 
-        // Extract name from education or background
-        let name = 'Candidate';
-        if (resume.background_summary) {
-            // Try to extract name from summary
-            const words = resume.background_summary.split(' ');
-            if (words.length > 0 && words[0].length > 1) {
-                name = words[0];
-            }
-        }
+        // Get candidate name from resume
+        const name = resume.candidate_name || 'Candidate';
 
-        // Get initials
+        // Get initials from name
         const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'C';
 
         // Update candidate name and avatar
@@ -593,14 +586,15 @@
         const exp = resume.years_experience || 0;
         document.getElementById('d-exp').textContent = exp + (exp === 1 ? ' year' : ' years');
 
-        // Update skills/tools
+        // Update skills (combine skills and tools)
         const skillsWrap = document.getElementById('skills-wrap');
         skillsWrap.innerHTML = '';
-        const tools = resume.tools || [];
-        tools.slice(0, 6).forEach((tool, i) => {
+        const allSkills = [...(resume.skills || []), ...(resume.tools || [])];
+        const uniqueSkills = [...new Set(allSkills)];
+        uniqueSkills.slice(0, 8).forEach((skill, i) => {
             const pill = document.createElement('div');
-            pill.className = 'skill-pill' + (i < 2 ? ' hl' : '');
-            pill.textContent = tool;
+            pill.className = 'skill-pill' + (i < 3 ? ' hl' : '');
+            pill.textContent = skill;
             skillsWrap.appendChild(pill);
         });
 
