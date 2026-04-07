@@ -1062,7 +1062,7 @@ def get_trajectory_interpretation(t: str) -> str:
 def synthesize_speech(text: str) -> str:
     try:
         resp = polly_client.synthesize_speech(
-            Text=text[:1500], OutputFormat="mp3", VoiceId="Joanna", Engine="neural"
+            Text=text[:1500], OutputFormat="mp3", VoiceId="Joanna"
         )
         return base64.b64encode(resp["AudioStream"].read()).decode("utf-8")
     except Exception as e:
