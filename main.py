@@ -879,13 +879,15 @@ MANDATORY QUESTION TYPE: {forced_type}
 TYPES:
 - warmup: Casual, unscored background question
 - definition: "What is X?" — foundational understanding
-- scenario: MANDATORY after definition. Same topic. Real-world step-by-step problem.
+- scenario: MANDATORY after definition. Same topic but DIFFERENT question. Ask a real-world problem or use-case, NOT the same definition question again.
 - why_probe: "WHY does that happen?" — depth check on confident shallow answer
 - practical_example: "Give me a specific example from your work/training" — before judging poor articulation
 - numerical: "What exact numbers/specs/margins did you work with?" — push for real data
 - personal_anchor: "Tell me about a SPECIFIC time YOU personally encountered X" — score specificity
 - contradiction: Use the exact question provided above — testing consistency
-- recovery_probe: Give a hint. Ask candidate to try again. MUST set hint_given=true.
+- recovery_probe: Ask a SIMPLER follow-up question or break it down. Give a hint. NEVER repeat the same question. Example: If they don't know "What is clock skew?", ask "Have you heard of setup time?" instead.
+
+IMPORTANT: NEVER ask the same question twice. Each question must be DIFFERENT from previous questions.
 
 INTELLECTUAL HONESTY: "I don't know" = 6/10, warm response. "I don't know + reasoning" = 8/10.
 POOR ARTICULATION: correct terms but incomplete = quality "poor_articulation", ask practical_example next.
@@ -964,10 +966,17 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     else:
         messages.append({"role": "user", "content": "[START INTERVIEW]"})
 
+    # Get previously asked questions to avoid repetition
+    prev_questions = [h["question"] for h in history if h.get("question")]
+    prev_questions_text = "\n".join([f"- {q}" for q in prev_questions[-5:]]) if prev_questions else "None"
+
     # Add skill coverage instruction to prompt
     skill_instruction = ""
     if current_skill:
-        skill_instruction = f"\n\nFOCUS SKILL FOR THIS QUESTION: {current_skill}\nCover this skill in your question. Skills already covered: {', '.join(skills_covered) if skills_covered else 'None yet'}"
+        skill_instruction = f"\n\nFOCUS SKILL FOR THIS QUESTION: {current_skill}\nSkills already covered: {', '.join(skills_covered) if skills_covered else 'None yet'}"
+
+    # Add previously asked questions to avoid repetition
+    skill_instruction += f"\n\nPREVIOUSLY ASKED QUESTIONS (DO NOT repeat these):\n{prev_questions_text}"
 
     # Check if previous answer was partial and needs hint
     hint_instruction = ""
