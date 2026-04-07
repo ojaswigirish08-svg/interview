@@ -1051,9 +1051,10 @@ WARMUP RULES:
 - Questions should test basic understanding, not advanced concepts
 
 {"MAKE YOUR FINAL DECISION NOW:" if must_decide else "After evaluating their answer:"}
-1. If answers were GOOD: Say "Great! You seem well prepared. Let's begin the technical interview."
-2. If answers were PARTIAL: Say "You seem a bit nervous. Would you like to proceed with the interview?"
-3. If answers were POOR: Say "Based on your responses, I think you need more preparation. Please study further and try again later."
+1. If answers were GOOD: Say "Great! You seem well prepared. Let's begin the technical interview." (warmup_decision: "start_interview")
+2. If answers were PARTIAL or POOR: Say "Let's proceed with the interview. Don't worry, this is just practice!" (warmup_decision: "start_interview")
+
+IMPORTANT: NEVER use "end_not_ready" - warmup is just to make the candidate comfortable, not to reject them.
 
 Previous Conversation:
 {conversation_text}
@@ -1064,8 +1065,8 @@ Return ONLY this JSON:
 {{
   "question": "your warmup question or decision statement",
   "skill_asked": "the specific skill this question is about",
-  "warmup_decision": "continue" or "start_interview" or "ask_ready" or "end_not_ready",
-  "performance_assessment": "good" or "partial" or "poor" or "pending"
+  "warmup_decision": "continue" or "start_interview",
+  "performance_assessment": "good" or "partial" or "pending"
 }}
 
 Important:
@@ -1625,9 +1626,15 @@ async def submit_answer(data: AnswerSubmit):
         # Handle warmup decision
         warmup_decision = result.get("warmup_decision", "continue")
 
+        # Safety: Never end interview during warmup - convert to start_interview
+        if warmup_decision == "end_not_ready":
+            print("[Warmup] Converting end_not_ready to start_interview - warmup should not reject candidates")
+            warmup_decision = "start_interview"
+            result["question"] = "Let's proceed with the interview. Don't worry, this is just practice to help you improve!"
+
         if warmup_decision == "start_interview":
             session["phase"] = "interview"
-            session["warmup_performance"] = "good"
+            session["warmup_performance"] = result.get("performance_assessment", "partial")
             compute_baseline(session)
             # Generate first interview question
             result = generate_question(session)
@@ -1635,10 +1642,6 @@ async def submit_answer(data: AnswerSubmit):
         elif warmup_decision == "ask_ready":
             session["phase"] = "ready_check"
             session["warmup_performance"] = "partial"
-
-        elif warmup_decision == "end_not_ready":
-            session["phase"] = "ended"
-            session["warmup_performance"] = "poor"
 
         # Hard limit: Force interview start after 3 warmup questions
         elif session["warmup_turns"] >= 3:
