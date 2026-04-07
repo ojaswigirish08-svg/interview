@@ -788,12 +788,25 @@ def decide_question_type(session: dict) -> tuple[str, dict | None]:
     last_eval = session.get("last_eval_quality", "adequate")
     last_confidence = session.get("last_confidence", "medium")
 
+    # Track recovery attempts per topic (for main interview only, not warmup)
+    last_topic = session.get("last_topic", "")
+    recovery_attempts = session.get("recovery_attempts_per_topic", {})
+    topic_recovery_count = recovery_attempts.get(last_topic, 0)
+
+    # RULE 0: If already tried 2 recovery probes on same topic, MOVE TO NEW SKILL
+    if last_type == "recovery_probe" and topic_recovery_count >= 2:
+        print(f"[Decision] Moving away from topic '{last_topic}' after {topic_recovery_count} recovery attempts")
+        session["skip_topic"] = last_topic  # Mark topic to skip
+        return "definition", {"force_new_topic": True}
+
     # RULE 1: definition → always scenario
     if last_type == "definition":
         return "scenario", None
 
-    # RULE 2: honest_admission → recovery_probe with forced hint
+    # RULE 2: honest_admission → recovery_probe with forced hint (max 2 per topic)
     if last_eval == "honest_admission":
+        recovery_attempts[last_topic] = topic_recovery_count + 1
+        session["recovery_attempts_per_topic"] = recovery_attempts
         return "recovery_probe", {"force_hint": True}
 
     # RULE 3: poor_articulation → practical_example
@@ -915,6 +928,12 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     # Get all skills to cover randomly
     all_skills = resume.get("skills", []) + resume.get("tools", [])
     skills_covered = session.get("skills_covered_in_interview", [])
+
+    # Skip topics where candidate clearly doesn't know (after 2 failed recovery attempts)
+    skip_topic = session.get("skip_topic")
+    if skip_topic:
+        skills_covered = skills_covered + [skip_topic]  # Treat skipped topic as covered
+        session["skip_topic"] = None  # Clear the skip flag
 
     # Pick a skill to focus on (prioritize uncovered skills)
     import random
