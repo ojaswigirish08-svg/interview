@@ -1027,24 +1027,16 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     # Force decision after 3 questions
     must_decide = warmup_count >= 2  # After 2 questions asked, this is the 3rd response
 
-    # Build list of previously asked questions
-    prev_questions = [h["question"] for h in session.get("history", []) if h.get("question")]
-    prev_questions_text = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None"
-
     prompt = f"""You are the Warmup Agent. Your job is to ask simple questions based on user skills.
 
 Candidate Name: {candidate_name}
 User Skills: {skills_text}
 
-Previously Asked Questions:
-{prev_questions_text}
-
 {"Greet the candidate by name first, then ask a simple question." if is_first_warmup else "Ask the next question."}
 
 Rules:
 - Ask ONE simple, basic question about ONE skill
-- Pick a DIFFERENT skill each time
-- Generate a RANDOM question (vary the question type)
+- Generate a RANDOM question
 - Keep it short and conversational
 - No emojis
 
