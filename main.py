@@ -1063,7 +1063,7 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     prev_questions = [h["question"] for h in session.get("history", []) if h.get("question")]
     prev_questions_text = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None"
 
-    prompt = f"""You are the Warmup Agent. Ask simple questions to make the candidate comfortable.
+    prompt = f"""You are the Warmup Agent. Ask simple questions based on user skills only.
 
 Candidate Name: {candidate_name}
 User Skills: {skills_text}
@@ -1071,9 +1071,10 @@ User Skills: {skills_text}
 Previously Asked Questions (DO NOT repeat these):
 {prev_questions_text}
 
-{"Greet the candidate warmly by their actual name (not initials like B. R.), then ask a simple question." if is_first_warmup else "Ask the next simple question."}
+{"Greet the candidate warmly by their actual name (not initials like B. R.), then ask a simple question about one of their skills." if is_first_warmup else "Ask the next simple question about one of their skills."}
 
 Rules:
+- Ask questions ONLY about the skills listed above
 - Don't mention initials of user name like B. R. - use their actual name
 - No complex or scenario questions
 - No emojis
@@ -1081,7 +1082,7 @@ Rules:
 Return ONLY this JSON:
 {{
   "question": "your simple question",
-  "skill_asked": "skill name"
+  "skill_asked": "skill name from the list above"
 }}
 """
 
