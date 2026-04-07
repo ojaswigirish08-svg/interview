@@ -416,6 +416,7 @@
 
 <script>
     let sessionOn = false, secs = 0, qCount = 0, ticker = null, orbState = 'idle';
+    let interviewEnded = false;  // Flag to completely stop interview
 
     function setOrb(s) { orbState = s; document.getElementById('orb').className = 'orb ' + s; }
     function fmt(s) { return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
@@ -426,30 +427,6 @@
         document.getElementById('stat-q').textContent = n;
     }
 
-    function toggleSession() {
-        sessionOn = !sessionOn;
-        const btn = document.getElementById('main-btn');
-        if (sessionOn) {
-            btn.textContent = 'pause';
-            document.getElementById('status-dot').classList.add('live');
-            document.getElementById('live-badge').textContent = 'live';
-            document.getElementById('live-badge').classList.add('active');
-            document.getElementById('footer-tag').textContent = 'in progress';
-            document.getElementById('main-label').textContent = 'Listening…';
-            document.getElementById('sub-label').textContent = 'speak now';
-            setOrb('listening');
-            document.getElementById('status-txt').textContent = 'listening';
-            ticker = setInterval(tick, 1000);
-        } else {
-            clearInterval(ticker);
-            btn.textContent = 'resume';
-            setOrb('idle');
-            document.getElementById('status-txt').textContent = 'paused';
-            document.getElementById('main-label').textContent = 'Paused';
-            document.getElementById('sub-label').textContent = 'interview on hold';
-        }
-    }
-
     function tick() {
         secs++;
         const t = fmt(secs);
@@ -458,74 +435,84 @@
     }
 
     function endSession() {
-        clearInterval(ticker); sessionOn = false;
+        // Mark interview as completely ended
+        interviewEnded = true;
+        sessionOn = false;
+
+        // Stop timer
+        if (ticker) {
+            clearInterval(ticker);
+            ticker = null;
+        }
+
+        // Stop all audio/recording
+        forceStopAllAudio();
+
+        // Update UI
         setOrb('idle');
         document.getElementById('status-dot').classList.remove('live');
         document.getElementById('status-txt').textContent = 'ended';
         document.getElementById('live-badge').textContent = 'ended';
         document.getElementById('live-badge').classList.remove('active');
-        document.getElementById('main-btn').textContent = 'start interview';
-        document.getElementById('main-label').textContent = 'Interview complete';
-        document.getElementById('sub-label').textContent = `${qCount} questions · ${fmt(secs)}`;
-        document.getElementById('question-text').textContent = 'Interview session ended.';
+        document.getElementById('main-btn').textContent = 'view report';
+        document.getElementById('main-btn').classList.remove('primary');
+        document.getElementById('main-btn').style.background = '#4a4';
+        document.getElementById('main-btn').style.borderColor = '#4a4';
+        document.getElementById('main-btn').style.color = '#fff';
+        document.getElementById('main-label').textContent = 'Interview Complete';
+        document.getElementById('sub-label').textContent = `${qCount} questions answered`;
+        document.getElementById('question-text').textContent = 'Thank you for completing the interview. Click "View Report" to see your results.';
         document.getElementById('footer-tag').textContent = 'completed';
     }
 
-    // API for integration
-    window.InterviewAgentUI = {
-        setCandidate: ({ name, initials, exp }) => {
-            if (name) document.getElementById('cand-name').textContent = name;
-            if (initials) document.getElementById('cand-av').textContent = initials;
-            if (exp) document.getElementById('d-exp').textContent = exp;
-        },
-        setDomain: (domain) => {
-            document.getElementById('d-domain').textContent = domain;
-        },
-        setSkills: (skills, highlighted = []) => {
-            const w = document.getElementById('skills-wrap');
-            w.innerHTML = '';
-            skills.forEach(s => {
-                const p = document.createElement('div');
-                p.className = 'skill-pill' + (highlighted.includes(s) ? ' hl' : '');
-                p.textContent = s;
-                w.appendChild(p);
-            });
-        },
-        setListening: () => {
-            setOrb('listening');
-            document.getElementById('status-txt').textContent = 'listening';
-            document.getElementById('main-label').textContent = 'Listening…';
-            document.getElementById('sub-label').textContent = 'speak now';
-        },
-        setSpeaking: () => {
-            setOrb('speaking');
-            document.getElementById('status-txt').textContent = 'speaking';
-            document.getElementById('main-label').textContent = 'AI Speaking';
-            document.getElementById('sub-label').textContent = 'please wait';
-        },
-        setIdle: () => {
-            setOrb('idle');
-            document.getElementById('status-txt').textContent = 'ready';
-            document.getElementById('main-label').textContent = 'AI Interviewer';
-            document.getElementById('sub-label').textContent = 'waiting';
-        },
-        setQuestion: (text, num) => {
-            document.getElementById('question-text').textContent = text;
-            if (num !== undefined) {
-                qCount = num;
-                updateQuestionCount(num);
-            }
-        },
-        incrementQuestion: () => {
-            qCount++;
-            updateQuestionCount(qCount);
+    function forceStopAllAudio() {
+        // Stop recording
+        isRecording = false;
+        speechDetected = false;
+        silenceStart = null;
+
+        // Stop media recorder
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+            try { mediaRecorder.stop(); } catch(e) {}
         }
-    };
+        mediaRecorder = null;
+
+        // Stop all media tracks
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => {
+                track.stop();
+                track.enabled = false;
+            });
+            mediaStream = null;
+        }
+
+        // Close audio context
+        if (audioContext && audioContext.state !== 'closed') {
+            try { audioContext.close(); } catch(e) {}
+        }
+        audioContext = null;
+        analyser = null;
+
+        // Stop any playing audio
+        if (currentAudio) {
+            try {
+                currentAudio.pause();
+                currentAudio.src = '';
+            } catch(e) {}
+            currentAudio = null;
+        }
+
+        // Cancel speech synthesis
+        if ('speechSynthesis' in window) {
+            speechSynthesis.cancel();
+        }
+    }
 
     // ════════════════════════════════════════════════════════════
     // INTERVIEW INTEGRATION
     // ════════════════════════════════════════════════════════════
     let sessionId = null;
+    let sessionData = null;
     let mediaStream = null;
     let audioContext = null;
     let analyser = null;
@@ -535,6 +522,7 @@
     let silenceStart = null;
     let speechDetected = false;
     let recordingStartTime = 0;
+    let currentAudio = null;
     const SILENCE_THRESHOLD = 15;
     const SILENCE_TIMEOUT = 3000;
 
@@ -543,7 +531,23 @@
     sessionId = urlParams.get('session_id');
 
     if (sessionId) {
-        // Auto-start interview when session_id is provided
+        // Load session info first, then start interview
+        loadSessionInfo();
+    }
+
+    async function loadSessionInfo() {
+        try {
+            // Fetch session data to get candidate info
+            const r = await fetch('/api/get-session?session_id=' + sessionId);
+            if (r.ok) {
+                sessionData = await r.json();
+                updateCandidateUI(sessionData);
+            }
+        } catch (e) {
+            console.log('Could not load session info:', e);
+        }
+
+        // Start the interview
         sessionOn = true;
         document.getElementById('main-btn').textContent = 'end interview';
         document.getElementById('status-dot').classList.add('live');
@@ -552,13 +556,65 @@
         document.getElementById('footer-tag').textContent = 'in progress';
         ticker = setInterval(tick, 1000);
 
-        // Start the interview
         initInterview();
     }
 
+    function updateCandidateUI(data) {
+        if (!data || !data.resume) return;
+
+        const resume = data.resume;
+
+        // Extract name from education or background
+        let name = 'Candidate';
+        if (resume.background_summary) {
+            // Try to extract name from summary
+            const words = resume.background_summary.split(' ');
+            if (words.length > 0 && words[0].length > 1) {
+                name = words[0];
+            }
+        }
+
+        // Get initials
+        const initials = name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || 'C';
+
+        // Update candidate name and avatar
+        document.getElementById('cand-name').textContent = name;
+        document.getElementById('cand-av').textContent = initials;
+
+        // Update domain
+        const domainMap = {
+            'analog_layout': 'Analog Layout',
+            'physical_design': 'Physical Design',
+            'design_verification': 'Design Verification'
+        };
+        document.getElementById('d-domain').textContent = domainMap[resume.domain] || resume.domain || 'VLSI';
+
+        // Update experience
+        const exp = resume.years_experience || 0;
+        document.getElementById('d-exp').textContent = exp + (exp === 1 ? ' year' : ' years');
+
+        // Update skills/tools
+        const skillsWrap = document.getElementById('skills-wrap');
+        skillsWrap.innerHTML = '';
+        const tools = resume.tools || [];
+        tools.slice(0, 6).forEach((tool, i) => {
+            const pill = document.createElement('div');
+            pill.className = 'skill-pill' + (i < 2 ? ' hl' : '');
+            pill.textContent = tool;
+            skillsWrap.appendChild(pill);
+        });
+
+        // Update mode badge
+        const modeBadge = document.querySelector('.round-badge');
+        if (modeBadge && data.mode) {
+            modeBadge.textContent = data.mode === 'mock' ? 'Mock Interview' : 'Real Interview';
+        }
+    }
+
     async function initInterview() {
+        if (interviewEnded) return;
+
         try {
-            // Start the interview
             const r = await fetch('/api/start-interview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -566,10 +622,12 @@
             });
             const data = await r.json();
 
-            // Display first question
-            displayQuestion(data);
+            // Update candidate UI if resume info is in response
+            if (data.resume) {
+                updateCandidateUI({ resume: data.resume });
+            }
 
-            // Play audio and then start recording
+            displayQuestion(data);
             await playAudio(data.question, data.audio);
         } catch (e) {
             console.error('Init error:', e);
@@ -578,29 +636,37 @@
     }
 
     function displayQuestion(data) {
+        if (interviewEnded) return;
+
         document.getElementById('question-text').textContent = data.question;
         updateQuestionCount(data.turn || qCount + 1);
 
-        // Update phase badge
         const phase = data.phase || 'interview';
         document.getElementById('live-badge').textContent = phase === 'warmup' ? 'warmup' : 'live';
+        document.getElementById('live-badge').classList.add('active');
     }
 
     async function playAudio(text, b64Audio) {
-        InterviewAgentUI.setSpeaking();
+        if (interviewEnded) return;
+
+        setOrb('speaking');
+        document.getElementById('status-txt').textContent = 'speaking';
+        document.getElementById('main-label').textContent = 'AI Speaking';
+        document.getElementById('sub-label').textContent = 'please wait...';
 
         if (b64Audio) {
             const bytes = Uint8Array.from(atob(b64Audio), c => c.charCodeAt(0));
             const blob = new Blob([bytes], { type: 'audio/mpeg' });
             const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
+            currentAudio = new Audio(url);
 
             await new Promise(resolve => {
-                audio.onended = resolve;
-                audio.onerror = resolve;
-                audio.play().catch(resolve);
+                currentAudio.onended = resolve;
+                currentAudio.onerror = resolve;
+                currentAudio.play().catch(resolve);
             });
             URL.revokeObjectURL(url);
+            currentAudio = null;
         } else if ('speechSynthesis' in window) {
             const utt = new SpeechSynthesisUtterance(text);
             utt.rate = 0.93;
@@ -611,12 +677,14 @@
             });
         }
 
-        // After speaking, start recording
-        startRecording();
+        // After speaking, start recording (if not ended)
+        if (!interviewEnded) {
+            startRecording();
+        }
     }
 
     async function startRecording() {
-        if (isRecording) return;
+        if (isRecording || interviewEnded) return;
 
         try {
             mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -627,6 +695,11 @@
                     noiseSuppression: true
                 }
             });
+
+            if (interviewEnded) {
+                mediaStream.getTracks().forEach(t => t.stop());
+                return;
+            }
 
             audioContext = new (window.AudioContext || window.webkitAudioContext)();
             analyser = audioContext.createAnalyser();
@@ -655,12 +728,14 @@
             speechDetected = false;
             silenceStart = null;
 
-            InterviewAgentUI.setListening();
+            setOrb('listening');
+            document.getElementById('status-txt').textContent = 'listening';
+            document.getElementById('main-label').textContent = 'Listening...';
             document.getElementById('sub-label').textContent = 'speak now...';
 
             // Audio level monitoring with silence detection
             const checkAudio = () => {
-                if (!isRecording) return;
+                if (!isRecording || interviewEnded) return;
 
                 analyser.getByteFrequencyData(dataArray);
                 const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
@@ -715,7 +790,7 @@
             mediaStream.getTracks().forEach(track => track.stop());
         }
 
-        if (audioContext) {
+        if (audioContext && audioContext.state !== 'closed') {
             audioContext.close();
         }
 
@@ -724,9 +799,11 @@
     }
 
     async function sendAudioForTranscription() {
+        if (interviewEnded) return;
+
         if (audioChunks.length === 0) {
             document.getElementById('sub-label').textContent = 'no audio recorded';
-            setTimeout(startRecording, 1500);
+            if (!interviewEnded) setTimeout(startRecording, 1500);
             return;
         }
 
@@ -743,9 +820,11 @@
             const td = await tr.json();
             const txt = (td.transcript || '').trim();
 
+            if (interviewEnded) return;
+
             if (!txt) {
                 document.getElementById('sub-label').textContent = 'could not hear, try again...';
-                setTimeout(startRecording, 1500);
+                if (!interviewEnded) setTimeout(startRecording, 1500);
                 return;
             }
 
@@ -770,10 +849,10 @@
 
             const ad = await ar.json();
 
+            if (interviewEnded) return;
+
             if (ad.should_end) {
                 endSession();
-                // Redirect to report
-                window.location.href = '/?report=' + sessionId;
                 return;
             }
 
@@ -784,32 +863,44 @@
         } catch (e) {
             console.error('Error:', e);
             document.getElementById('sub-label').textContent = 'error, retrying...';
-            setTimeout(startRecording, 2000);
+            if (!interviewEnded) setTimeout(startRecording, 2000);
         }
     }
 
-    // Override toggleSession for actual interview
+    // Main button click handler
     document.getElementById('main-btn').onclick = async function() {
         if (!sessionId) {
-            // Need to create session first - redirect to main page
             window.location.href = '/';
             return;
         }
 
-        // End interview and generate report
+        if (interviewEnded) {
+            // Already ended - generate and show report
+            document.getElementById('sub-label').textContent = 'generating report...';
+            try {
+                const r = await fetch('/api/generate-report', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+                const report = await r.json();
+                localStorage.setItem('interview_report', JSON.stringify(report));
+                window.location.href = '/?show_report=1';
+            } catch (e) {
+                console.error('Report error:', e);
+                document.getElementById('sub-label').textContent = 'error generating report';
+            }
+            return;
+        }
+
+        // End the interview
         endSession();
-        try {
-            const r = await fetch('/api/generate-report', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session_id: sessionId })
-            });
-            const report = await r.json();
-            // Store and redirect
-            localStorage.setItem('interview_report', JSON.stringify(report));
-            window.location.href = '/?show_report=1';
-        } catch (e) {
-            console.error('Report error:', e);
+    };
+
+    // End interview button (danger button)
+    document.querySelector('.ctrl-btn.danger').onclick = function() {
+        if (!interviewEnded) {
+            endSession();
         }
     };
 </script>

@@ -1321,6 +1321,19 @@ async def create_session(data: SessionCreate):
     sessions[sid] = session
     return JSONResponse({"session_id": sid, "resume": resume})
 
+@app.get("/api/get-session")
+async def get_session(session_id: str):
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    return JSONResponse({
+        "session_id": session_id,
+        "mode": session.get("mode", "mock"),
+        "resume": session.get("resume", {}),
+        "turn": session.get("turn", 0),
+        "phase": session.get("phase", "warmup")
+    })
+
 @app.post("/api/start-interview")
 async def start_interview(data: dict):
     sid = data.get("session_id")
