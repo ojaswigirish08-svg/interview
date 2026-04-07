@@ -568,6 +568,22 @@ async function processResume(file) {
     const p=await r.json(); S.resumeParsed=p;
     document.getElementById('pldr').style.display='none';
     document.getElementById('pdata').style.display='block';
+
+    // Check if resume is suitable for VLSI interview
+    if (!p.is_vlsi_suitable) {
+      document.getElementById('pdata').innerHTML = `
+        <div style="text-align:center; padding:20px;">
+          <div style="font-size:48px; margin-bottom:15px;">&#9888;</div>
+          <div style="font-size:16px; font-weight:600; color:#c44; margin-bottom:10px;">Resume Not Suitable</div>
+          <div style="font-size:13px; color:#666; line-height:1.5;">${p.rejection_reason || 'Your resume does not appear to be related to VLSI/Semiconductor domain.'}</div>
+          <div style="margin-top:15px; font-size:12px; color:#888;">This interview is specifically for VLSI candidates.<br>Please upload a VLSI/Semiconductor related resume.</div>
+        </div>`;
+      const btn=document.getElementById('btn-start');
+      btn.disabled=true; btn.textContent='Not Eligible';
+      btn.style.background='#ccc'; btn.style.cursor='not-allowed';
+      return;
+    }
+
     const dm={analog_layout:'Analog Layout',physical_design:'Physical Design',design_verification:'Design Verification'};
     const lm={fresh_graduate:'Fresh Graduate',trained_fresher:'Trained Fresher',experienced_junior:'Exp. Junior (1-3yr)',experienced_senior:'Exp. Senior (3+yr)'};
     document.getElementById('p-domain').textContent=dm[p.domain]||p.domain;

@@ -230,13 +230,21 @@ def call_llm_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -
 # RESUME PARSER
 # ════════════════════════════════════════════════════════════
 def parse_resume(resume_text: str) -> dict:
-    prompt = f"""You are a VLSI expert HR analyst. Parse this resume carefully.
+    prompt = f"""You are a VLSI expert HR analyst. Parse this resume and determine if it's suitable for a VLSI interview.
 
 Resume:
 {resume_text[:4000]}
 
+First, check if this resume is related to VLSI/Semiconductor/Electronics domain. Look for:
+- VLSI-related keywords: RTL, Verilog, VHDL, SystemVerilog, ASIC, FPGA, SoC, Physical Design, DFT, Verification, Analog Layout, PnR, STA, Synthesis, Timing, Floorplan, Power, Clock, etc.
+- Semiconductor tools: Cadence, Synopsys, Mentor, ICC, ICC2, Innovus, Virtuoso, PrimeTime, Design Compiler, VCS, Questa, etc.
+- Electronics/ECE/EEE education background
+- Semiconductor company experience or training
+
 Return ONLY this JSON (no markdown):
 {{
+  "is_vlsi_suitable": true,
+  "rejection_reason": "",
   "domain": "analog_layout",
   "level": "trained_fresher",
   "years_experience": 0,
@@ -247,18 +255,23 @@ Return ONLY this JSON (no markdown):
   "education": "degree and branch"
 }}
 
-domain: analog_layout | physical_design | design_verification
+is_vlsi_suitable: true if resume has VLSI/Semiconductor/Electronics background, false otherwise
+rejection_reason: If not suitable, explain briefly why (e.g., "Resume is for Software Development, not VLSI")
+domain: analog_layout | physical_design | design_verification (only if suitable)
 level: fresh_graduate | trained_fresher | experienced_junior | experienced_senior
 fresh_graduate=0yr, trained_fresher=0-1yr training/internship, experienced_junior=1-3yr, experienced_senior=3+yr"""
 
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=600)
-    if result and "domain" in result:
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=800)
+    if result and "is_vlsi_suitable" in result:
         return result
+    # Default: assume not suitable if parsing fails
     return {
-        "domain": "physical_design", "level": "trained_fresher",
-        "years_experience": 0, "tools": ["ICC2", "PrimeTime"],
-        "key_projects": [], "background_summary": "VLSI candidate.",
-        "training_institutes": [], "education": "B.Tech ECE"
+        "is_vlsi_suitable": False,
+        "rejection_reason": "Could not parse resume. Please upload a valid VLSI/Semiconductor resume.",
+        "domain": "unknown", "level": "unknown",
+        "years_experience": 0, "tools": [],
+        "key_projects": [], "background_summary": "",
+        "training_institutes": [], "education": ""
     }
 
 # ════════════════════════════════════════════════════════════
