@@ -24,11 +24,9 @@ sessions: dict = {}
 # ════════════════════════════════════════════════════════════
 # AI CLIENTS
 # ════════════════════════════════════════════════════════════
-from groq import Groq
 import boto3
 from openai import OpenAI
 
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 polly_client = boto3.client(
     "polly",
@@ -181,8 +179,8 @@ class ReportRequest(BaseModel):
 # LLM HELPERS
 # ════════════════════════════════════════════════════════════
 def call_llm(messages: list, temperature=0.5, max_tokens=1000) -> str:
-    resp = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    resp = openai_client.chat.completions.create(
+        model="gpt-4o-mini",
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
