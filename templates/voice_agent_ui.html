@@ -975,6 +975,122 @@
             endSession();
         }
     };
+
+    // ════════════════════════════════════════════════════════════
+    // ANTI-CHEAT — Silent detection, never interrupts interview
+    // ════════════════════════════════════════════════════════════
+    let tabSwitchCount = 0;
+    let screenShareStream = null;
+
+    // 1. Tab switch detection
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden && sessionOn && !interviewEnded) {
+            tabSwitchCount++;
+            sendAntiCheat('tab_switch', `count:${tabSwitchCount}`);
+            console.log(`[Anti-cheat] Tab switch detected (${tabSwitchCount})`);
+        }
+    });
+
+    // 2. Window blur detection (alt+tab, clicking outside)
+    window.addEventListener('blur', () => {
+        if (sessionOn && !interviewEnded) {
+            sendAntiCheat('window_blur');
+            console.log('[Anti-cheat] Window blur detected');
+        }
+    });
+
+    // 3. Copy/Paste detection
+    document.addEventListener('paste', (e) => {
+        if (sessionOn && !interviewEnded) {
+            sendAntiCheat('paste_event');
+            console.log('[Anti-cheat] Paste detected');
+        }
+    });
+
+    document.addEventListener('copy', (e) => {
+        if (sessionOn && !interviewEnded) {
+            sendAntiCheat('copy_event');
+            console.log('[Anti-cheat] Copy detected');
+        }
+    });
+
+    // 4. Right-click detection
+    document.addEventListener('contextmenu', (e) => {
+        if (sessionOn && !interviewEnded) {
+            sendAntiCheat('right_click');
+        }
+    });
+
+    // 5. Keyboard shortcuts detection (Ctrl+C, Ctrl+V, Ctrl+Tab, Alt+Tab)
+    document.addEventListener('keydown', (e) => {
+        if (!sessionOn || interviewEnded) return;
+
+        if (e.ctrlKey || e.metaKey) {
+            if (e.key === 'c') sendAntiCheat('shortcut_copy');
+            if (e.key === 'v') sendAntiCheat('shortcut_paste');
+            if (e.key === 'Tab') sendAntiCheat('shortcut_ctrl_tab');
+        }
+        if (e.altKey && e.key === 'Tab') {
+            sendAntiCheat('shortcut_alt_tab');
+        }
+    });
+
+    // 6. Screen share detection
+    async function setupScreenShareDetection() {
+        if (!navigator.mediaDevices) return;
+
+        const orig = navigator.mediaDevices.getDisplayMedia?.bind(navigator.mediaDevices);
+        if (orig) {
+            navigator.mediaDevices.getDisplayMedia = async (...args) => {
+                const stream = await orig(...args);
+                screenShareStream = stream;
+                if (sessionOn && !interviewEnded) {
+                    sendAntiCheat('screen_share', 'getDisplayMedia_called');
+                }
+                stream.getTracks().forEach(t => {
+                    t.addEventListener('ended', () => { screenShareStream = null; });
+                });
+                return stream;
+            };
+        }
+    }
+    setupScreenShareDetection();
+
+    // 7. DevTools detection (resize heuristic)
+    let devToolsOpen = false;
+    const threshold = 160;
+    setInterval(() => {
+        if (!sessionOn || interviewEnded) return;
+        const widthThreshold = window.outerWidth - window.innerWidth > threshold;
+        const heightThreshold = window.outerHeight - window.innerHeight > threshold;
+        if ((widthThreshold || heightThreshold) && !devToolsOpen) {
+            devToolsOpen = true;
+            sendAntiCheat('devtools_open');
+            console.log('[Anti-cheat] DevTools possibly opened');
+        } else if (!widthThreshold && !heightThreshold) {
+            devToolsOpen = false;
+        }
+    }, 2000);
+
+    // Send anti-cheat event to server
+    async function sendAntiCheat(eventType, metadata = '') {
+        if (!sessionId) return;
+        try {
+            await fetch('/api/anticheat-event', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    event_type: eventType,
+                    turn: qCount,
+                    timestamp: Date.now() / 1000,
+                    metadata: metadata
+                })
+            });
+        } catch (e) {
+            console.log('[Anti-cheat] Failed to send event:', e);
+        }
+    }
 </script>
 </body>
 </html>
