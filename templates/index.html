@@ -589,25 +589,14 @@ function selMode(m){
 // ══════════════════════════════════════════════════
 async function startInterview() {
   if(!S.resumeParsed) return;
-  if(!S.mediaStream){
-    try{S.mediaStream=await navigator.mediaDevices.getUserMedia({video:true,audio:true});}catch(e){}
-  }
-  if(S.mediaStream) document.getElementById('pip-video').srcObject=S.mediaStream;
 
+  // Create session
   const r=await fetch('/api/create-session',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({resume_text:JSON.stringify(S.resumeParsed),mode:S.mode})});
   const d=await r.json(); S.sessionId=d.session_id;
 
-  showScreen('interview');
-  S.interviewActive=true;
-  setupCanaryWatcher();
-  detectScreenShare();
-
-  setStatus('Preparing first question...');
-  const q=await fetch('/api/start-interview',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({session_id:S.sessionId})});
-  const qd=await q.json(); S.currentTurn=qd.turn; S.currentPhase=qd.phase;
-  displayQ(qd); await speak(qd.question, qd.audio);
+  // Redirect to voice_agent_ui for interview
+  window.location.href = `/interview?session_id=${S.sessionId}`;
 }
 
 // ══════════════════════════════════════════════════
