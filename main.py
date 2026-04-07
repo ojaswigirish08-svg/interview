@@ -1059,20 +1059,18 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     prev_questions = [h["question"] for h in session.get("history", []) if h.get("question")]
     prev_questions_text = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None"
 
-    # Get short name (first name only) for greeting
-    short_name = candidate_name.split()[0] if candidate_name else "there"
-
     prompt = f"""You are the Warmup Agent. Ask simple questions to make the candidate comfortable.
 
-Candidate Name: {short_name}
+Candidate Name: {candidate_name}
 User Skills: {skills_text}
 
 Previously Asked Questions (DO NOT repeat these):
 {prev_questions_text}
 
-{"Greet the candidate warmly by first name, then ask a simple question." if is_first_warmup else "Ask the next simple question."}
+{"Greet the candidate warmly by their actual name (not initials like B. R.), then ask a simple question." if is_first_warmup else "Ask the next simple question."}
 
 Rules:
+- Don't mention initials of user name like B. R. - use their actual name
 - Ask simple "What is X?" questions only
 - No complex or scenario questions
 - No emojis
