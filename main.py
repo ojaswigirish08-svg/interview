@@ -1436,8 +1436,20 @@ async def create_session(data: SessionCreate):
         "contradiction_asked": {},
         "topic_suspicion": {},
         "started_at": time.time(),
+        "cached_first_question": None,
+        "cached_first_audio": None,
     }
     sessions[sid] = session
+
+    # Pre-generate first warmup question in background (for faster start)
+    try:
+        first_q = generate_warmup_question(session)
+        first_audio = synthesize_speech(first_q["question"])
+        session["cached_first_question"] = first_q
+        session["cached_first_audio"] = first_audio
+    except Exception as e:
+        print(f"Pre-generation failed: {e}")
+
     return JSONResponse({"session_id": sid, "resume": resume})
 
 @app.get("/api/get-session")
@@ -1460,12 +1472,22 @@ async def start_interview(data: dict):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    # Use warmup question generator for warmup phase
-    if session["phase"] == "warmup":
+    # Use cached first question if available (faster start)
+    if session["phase"] == "warmup" and session.get("cached_first_question"):
+        result = session["cached_first_question"]
+        audio = session.get("cached_first_audio", "")
+        # Clear cache after use
+        session["cached_first_question"] = None
+        session["cached_first_audio"] = None
+        print("[Interview] Using cached first question - instant start!")
+    elif session["phase"] == "warmup":
         result = generate_warmup_question(session)
-        session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+        audio = synthesize_speech(result["question"])
     else:
         result = generate_question(session)
+        audio = synthesize_speech(result["question"])
+
+    session["warmup_conversation"].append(f"Interviewer: {result['question']}")
 
     entry = {
         "turn": session["turn"], "phase": session["phase"],
@@ -1481,8 +1503,6 @@ async def start_interview(data: dict):
     session["turn"] += 1
     session["last_topic"] = result.get("topic")
     session["last_question_type"] = result.get("question_type", "warmup")
-
-    audio = synthesize_speech(result["question"])
 
     # Check if interview should end due to poor warmup performance
     should_end = result.get("warmup_decision") == "end_not_ready"

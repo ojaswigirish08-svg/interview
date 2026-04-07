@@ -531,6 +531,13 @@
     sessionId = urlParams.get('session_id');
 
     if (sessionId) {
+        // Show loading state immediately
+        document.getElementById('main-label').textContent = 'Starting Interview...';
+        document.getElementById('sub-label').textContent = 'preparing your session';
+        document.getElementById('question-text').textContent = 'Loading interview, please wait...';
+        document.getElementById('live-badge').textContent = 'loading';
+        setOrb('speaking'); // Show animation
+
         // Load session info first, then start interview
         loadSessionInfo();
     }
@@ -551,9 +558,9 @@
         sessionOn = true;
         document.getElementById('main-btn').textContent = 'end interview';
         document.getElementById('status-dot').classList.add('live');
-        document.getElementById('live-badge').textContent = 'live';
+        document.getElementById('live-badge').textContent = 'starting';
         document.getElementById('live-badge').classList.add('active');
-        document.getElementById('footer-tag').textContent = 'in progress';
+        document.getElementById('footer-tag').textContent = 'starting...';
         ticker = setInterval(tick, 1000);
 
         initInterview();
