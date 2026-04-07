@@ -1252,6 +1252,11 @@ async def index():
     with open("templates/index.html", "r", encoding="utf-8") as f:
         return f.read()
 
+@app.get("/interview", response_class=HTMLResponse)
+async def interview_ui():
+    with open("templates/voice_agent_ui.html", "r", encoding="utf-8") as f:
+        return f.read()
+
 @app.post("/api/parse-resume")
 async def parse_resume_endpoint(file: UploadFile = File(...)):
     content = await file.read()
