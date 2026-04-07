@@ -677,6 +677,54 @@
         }
     }
 
+    // Play audio only without starting recording after
+    async function playAudioOnly(text, b64Audio) {
+        setOrb('speaking');
+        document.getElementById('status-txt').textContent = 'speaking';
+        document.getElementById('main-label').textContent = 'AI Speaking';
+
+        if (b64Audio) {
+            const bytes = Uint8Array.from(atob(b64Audio), c => c.charCodeAt(0));
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const url = URL.createObjectURL(blob);
+            currentAudio = new Audio(url);
+            await new Promise(resolve => {
+                currentAudio.onended = resolve;
+                currentAudio.onerror = resolve;
+                currentAudio.play().catch(resolve);
+            });
+            URL.revokeObjectURL(url);
+            currentAudio = null;
+        } else if ('speechSynthesis' in window) {
+            const utt = new SpeechSynthesisUtterance(text);
+            utt.rate = 0.93;
+            await new Promise(resolve => {
+                utt.onend = resolve;
+                utt.onerror = resolve;
+                speechSynthesis.speak(utt);
+            });
+        }
+        setOrb('idle');
+    }
+
+    // End session with a custom message
+    function endSessionWithMessage(message) {
+        interviewEnded = true;
+        sessionOn = false;
+        if (ticker) { clearInterval(ticker); ticker = null; }
+        forceStopAllAudio();
+
+        setOrb('idle');
+        document.getElementById('status-dot').classList.remove('live');
+        document.getElementById('status-txt').textContent = 'ended';
+        document.getElementById('main-btn').textContent = 'go back';
+        document.getElementById('main-btn').style.background = '#666';
+        document.getElementById('main-btn').style.borderColor = '#666';
+        document.getElementById('main-label').textContent = 'Session Ended';
+        document.getElementById('sub-label').textContent = message;
+        document.getElementById('footer-tag').textContent = 'ended';
+    }
+
     async function startRecording() {
         if (isRecording || interviewEnded) return;
 
@@ -845,9 +893,32 @@
 
             if (interviewEnded) return;
 
+            // Handle warmup decisions
+            if (ad.warmup_decision === 'end_not_ready') {
+                // Poor warmup performance - end interview
+                document.getElementById('question-text').textContent = ad.question;
+                document.getElementById('live-badge').textContent = 'not ready';
+                document.getElementById('live-badge').classList.remove('active');
+                document.getElementById('footer-tag').textContent = 'needs preparation';
+                await playAudioOnly(ad.question, ad.audio);
+                endSessionWithMessage('Please prepare more and try again later.');
+                return;
+            }
+
+            if (ad.warmup_decision === 'ask_ready') {
+                // Partial performance - asking if ready
+                document.getElementById('live-badge').textContent = 'confirming';
+            }
+
             if (ad.should_end) {
                 endSession();
                 return;
+            }
+
+            // Update phase badge
+            if (ad.phase === 'interview') {
+                document.getElementById('live-badge').textContent = 'interview';
+                document.getElementById('live-badge').classList.add('active');
             }
 
             // Display next question

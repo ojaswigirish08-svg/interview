@@ -929,6 +929,108 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     return result
 
 # ════════════════════════════════════════════════════════════
+# WARMUP NODE - Skill-based warmup questions
+# ════════════════════════════════════════════════════════════
+def generate_warmup_question(session: dict, candidate_answer: str = None) -> dict:
+    """Generate warmup questions based on user's resume skills"""
+    resume = session.get("resume", {})
+    warmup_count = session.get("warmup_turns", 0)
+    is_first_warmup = warmup_count == 0
+
+    # Extract skills and info from resume
+    candidate_name = resume.get("candidate_name", "Candidate")
+    skills = resume.get("skills", [])
+    tools = resume.get("tools", [])
+    all_skills = skills + tools
+    skills_text = ", ".join(all_skills[:10]) if all_skills else "VLSI concepts"
+
+    projects = resume.get("key_projects", [])
+    projects_text = ", ".join(projects[:3]) if projects else "VLSI projects"
+
+    level = resume.get("level", "trained_fresher")
+    domain = resume.get("domain", "physical_design")
+
+    # Build conversation history
+    conversation_parts = []
+    for h in session.get("history", []):
+        if h.get("question"):
+            conversation_parts.append(f"Interviewer: {h['question']}")
+        if h.get("answer"):
+            conversation_parts.append(f"Candidate: {h['answer']}")
+    conversation_text = "\n".join(conversation_parts) if conversation_parts else "No conversation yet."
+
+    # Force decision after 3 questions
+    must_decide = warmup_count >= 2  # After 2 questions asked, this is the 3rd response
+
+    prompt = f"""You are a friendly VLSI interviewer conducting a WARMUP session.
+STRICT LIMIT: Only 2-3 warmup questions total. You have asked {warmup_count} questions so far.
+
+Candidate Name: {candidate_name}
+Candidate Skills: {skills_text}
+Candidate Projects: {projects_text}
+Experience Level: {level}
+Domain: {domain}
+
+{"This is the START. Greet warmly by name and ask your FIRST simple question based on ONE of their listed skills." if is_first_warmup else f"This is question {warmup_count + 1} of 3. Evaluate their last answer."}
+
+{"**CRITICAL: This is your LAST warmup response. You MUST make a final decision NOW based on all answers so far.**" if must_decide else ""}
+
+WARMUP RULES:
+- Ask questions ONLY based on the candidate's listed SKILLS
+- Questions should be BASIC/FUNDAMENTAL
+- Example: If skill is "Verilog" ask "What is the difference between blocking and non-blocking assignments?"
+- Example: If skill is "STA" ask "What is setup time and hold time?"
+- Example: If skill is "Cadence Virtuoso" ask "What is the purpose of DRC and LVS checks?"
+
+{"MAKE YOUR FINAL DECISION NOW:" if must_decide else "After evaluating their answer:"}
+1. If answers were GOOD: Say "Great! You seem well prepared. Let's begin the technical interview."
+2. If answers were PARTIAL: Say "You seem a bit nervous. Would you like to proceed with the interview?"
+3. If answers were POOR: Say "Based on your responses, I think you need more preparation. Please study further and try again later."
+
+Previous Conversation:
+{conversation_text}
+
+{f"Candidate's latest answer: {candidate_answer}" if candidate_answer else ""}
+
+Return ONLY this JSON:
+{{
+  "question": "your warmup question or decision statement",
+  "warmup_decision": "continue" or "start_interview" or "ask_ready" or "end_not_ready",
+  "performance_assessment": "good" or "partial" or "poor" or "pending"
+}}
+
+Important:
+- No emojis
+- Keep responses conversational and short
+- Questions MUST be from candidate's OWN skills
+- Do NOT include labels like "AI_Voice:" or "Interviewer:"
+{"- YOU MUST END WITH A DECISION - no more questions allowed!" if must_decide else ""}
+"""
+
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.5, max_tokens=500)
+
+    if not result or "question" not in result:
+        # Fallback
+        if is_first_warmup:
+            skill = all_skills[0] if all_skills else "VLSI"
+            return {
+                "question": f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
+                "question_type": "warmup",
+                "warmup_decision": "continue",
+                "performance_assessment": "pending"
+            }
+        else:
+            return {
+                "question": "Great! Let's proceed with the technical interview.",
+                "question_type": "warmup",
+                "warmup_decision": "start_interview",
+                "performance_assessment": "partial"
+            }
+
+    result["question_type"] = "warmup"
+    return result
+
+# ════════════════════════════════════════════════════════════
 # TRAJECTORY ANALYSIS
 # ════════════════════════════════════════════════════════════
 def compute_trajectory(scores: list) -> str:
@@ -1321,6 +1423,7 @@ async def create_session(data: SessionCreate):
     session = {
         "id": sid, "mode": data.mode, "resume": resume,
         "phase": "warmup", "turn": 0, "warmup_turns": 0,
+        "warmup_performance": "pending", "warmup_conversation": [],
         "difficulty_level": 1, "consecutive_strong": 0, "consecutive_weak": 0,
         "history": [], "topics_covered": [], "anchor_count": 0,
         "last_topic": None, "last_question_type": None,
@@ -1357,26 +1460,43 @@ async def start_interview(data: dict):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    result = generate_question(session)
+    # Use warmup question generator for warmup phase
+    if session["phase"] == "warmup":
+        result = generate_warmup_question(session)
+        session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+    else:
+        result = generate_question(session)
+
     entry = {
         "turn": session["turn"], "phase": session["phase"],
-        "question": result["question"], "question_type": result["question_type"],
+        "question": result["question"], "question_type": result.get("question_type", "warmup"),
         "topic": result.get("topic", "warmup"), "difficulty": result.get("difficulty", "basic"),
         "answer": None, "evaluation": None, "behavioral_flags": [],
         "answer_duration_sec": 0, "word_count": 0, "filler_rate": 0,
         "pronoun_rate": 0, "thinking_pause_sec": 0, "input_mode": "text",
         "correction_rate": 0, "above_level": False, "contradiction_inconsistency": False,
+        "warmup_decision": result.get("warmup_decision"),
     }
     session["history"].append(entry)
     session["turn"] += 1
     session["last_topic"] = result.get("topic")
-    session["last_question_type"] = result["question_type"]
+    session["last_question_type"] = result.get("question_type", "warmup")
 
     audio = synthesize_speech(result["question"])
+
+    # Check if interview should end due to poor warmup performance
+    should_end = result.get("warmup_decision") == "end_not_ready"
+    if should_end:
+        session["phase"] = "ended"
+        session["warmup_performance"] = "poor"
+
     return JSONResponse({
-        "question": result["question"], "question_type": result["question_type"],
+        "question": result["question"], "question_type": result.get("question_type", "warmup"),
         "turn": session["turn"], "phase": session["phase"],
-        "audio": audio, "difficulty": result.get("difficulty", "basic"), "should_end": False
+        "audio": audio, "difficulty": result.get("difficulty", "basic"),
+        "should_end": should_end,
+        "warmup_decision": result.get("warmup_decision"),
+        "resume": session.get("resume", {})
     })
 
 @app.post("/api/submit-answer")
@@ -1405,15 +1525,58 @@ async def submit_answer(data: AnswerSubmit):
         current_entry["behavioral_flags"] = dev["flags"]
         current_entry["behavioral_deviation"] = dev["deviation_score"]
 
-    # Phase transition
+    # Phase transition for warmup
     if session["phase"] == "warmup":
         session["warmup_turns"] += 1
-        if session["warmup_turns"] >= 2:
+        session["warmup_conversation"].append(f"Candidate: {data.answer}")
+
+        # Generate warmup response/next question
+        result = generate_warmup_question(session, data.answer)
+        session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+
+        # Handle warmup decision
+        warmup_decision = result.get("warmup_decision", "continue")
+
+        if warmup_decision == "start_interview":
+            session["phase"] = "interview"
+            session["warmup_performance"] = "good"
+            compute_baseline(session)
+            # Generate first interview question
+            result = generate_question(session)
+
+        elif warmup_decision == "ask_ready":
+            session["phase"] = "ready_check"
+            session["warmup_performance"] = "partial"
+
+        elif warmup_decision == "end_not_ready":
+            session["phase"] = "ended"
+            session["warmup_performance"] = "poor"
+
+        # Hard limit: Force interview start after 3 warmup questions
+        elif session["warmup_turns"] >= 3:
+            print("[Warmup] Hard limit reached - forcing interview start")
+            session["phase"] = "interview"
+            session["warmup_performance"] = "partial"
+            compute_baseline(session)
+            result = generate_question(session)
+
+    elif session["phase"] == "ready_check":
+        # User responded to "are you ready?" question
+        answer_lower = data.answer.lower()
+        if any(word in answer_lower for word in ["yes", "ready", "proceed", "sure", "okay", "ok"]):
             session["phase"] = "interview"
             compute_baseline(session)
-
-    # Generate next question + evaluate previous
-    result = generate_question(session, data.answer)
+            result = generate_question(session)
+        else:
+            session["phase"] = "ended"
+            session["warmup_performance"] = "declined"
+            result = {
+                "question": "No problem. Please take your time to prepare and come back when you're ready. Good luck!",
+                "question_type": "farewell"
+            }
+    else:
+        # Normal interview flow - Generate next question + evaluate previous
+        result = generate_question(session, data.answer)
 
     if current_entry and result.get("evaluation"):
         eval_data = result["evaluation"]
@@ -1536,15 +1699,23 @@ async def submit_answer(data: AnswerSubmit):
     session["last_topic"] = topic
     session["last_question_type"] = result["question_type"]
 
-    should_end = session["turn"] >= 22
+    # Determine if interview should end
+    should_end = (
+        session["turn"] >= 22 or
+        session["phase"] == "ended" or
+        result.get("warmup_decision") == "end_not_ready"
+    )
+
     audio = synthesize_speech(result["question"])
     return JSONResponse({
-        "question": result["question"], "question_type": result["question_type"],
+        "question": result["question"], "question_type": result.get("question_type", "interview"),
         "turn": session["turn"], "phase": session["phase"], "audio": audio,
         "difficulty": result.get("difficulty", DIFFICULTY_LABELS[session["difficulty_level"]]),
         "should_end": should_end,
         "hint_given": result.get("hint_given", False),
-        "hint_text": result.get("hint_text")
+        "hint_text": result.get("hint_text"),
+        "warmup_decision": result.get("warmup_decision"),
+        "warmup_performance": session.get("warmup_performance", "pending")
     })
 
 @app.post("/api/transcribe")
