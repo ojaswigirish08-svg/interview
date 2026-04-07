@@ -1039,7 +1039,7 @@ Domain: {domain}
 Skills already asked about: {', '.join(warmup_skills_asked) if warmup_skills_asked else 'None yet'}
 MUST ask about one of these remaining skills: {', '.join(remaining_skills[:5]) if remaining_skills else skills_text}
 
-{"This is the START. Greet warmly by name and ask your FIRST simple question based on ONE of their listed skills." if is_first_warmup else f"This is question {warmup_count + 1} of 3. Evaluate their last answer."}
+{"This is the START. First GREET the candidate warmly by their name (e.g., 'Hello [Name]! Welcome to the interview.'). Then ask your FIRST simple question based on ONE of their listed skills." if is_first_warmup else f"This is question {warmup_count + 1} of 3. Evaluate their last answer."}
 
 {"**CRITICAL: This is your LAST warmup response. You MUST make a final decision NOW based on all answers so far.**" if must_decide else ""}
 
@@ -1084,7 +1084,7 @@ Important:
         import random
         skill = random.choice(remaining_skills) if remaining_skills else (all_skills[0] if all_skills else "VLSI")
         return {
-            "question": f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
+            "question": f"Hello {candidate_name}! Welcome to the interview. I'm excited to speak with you today. Let's start with a simple question about {skill}. Can you briefly explain what it is?",
             "question_type": "warmup",
             "skill_asked": skill,
             "warmup_decision": "continue",
