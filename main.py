@@ -954,11 +954,20 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     history = session.get("history", [])
 
     # Add all questions
+    # for i, h in enumerate(history):
+    #     messages.append({"role": "assistant", "content": h["question"]})
+    #     # Only include last 5 answers
+    #     if h.get("answer") and i >= len(history) - 5:
+    #         messages.append({"role": "user", "content": h["answer"]})
     for i, h in enumerate(history):
         messages.append({"role": "assistant", "content": h["question"]})
-        # Only include last 5 answers
+        # Pass last 5 answers only — agent decides continuation based on recent performance
         if h.get("answer") and i >= len(history) - 5:
             messages.append({"role": "user", "content": h["answer"]})
+        elif h.get("answer"):
+            # Questions without answers still in context as assistant turns
+            # but answers older than 5 are excluded intentionally
+            pass
 
     # Add current answer if provided
     if candidate_answer:
@@ -968,7 +977,8 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     # Get previously asked questions to avoid repetition
     prev_questions = [h["question"] for h in history if h.get("question")]
-    prev_questions_text = "\n".join([f"- {q}" for q in prev_questions[-5:]]) if prev_questions else "None"
+    #prev_questions_text = "\n".join([f"- {q}" for q in prev_questions[-5:]]) if prev_questions else "None"
+    prev_questions_text = "\n".join([f"- {q}" for q in prev_questions]) if prev_questions else "None"
 
     # Add skill coverage instruction to prompt
     skill_instruction = ""
@@ -1070,6 +1080,7 @@ User Skills: {skills_text}
 
 Previously Asked Questions (DO NOT repeat these):
 {prev_questions_text}
+
 
 {"Greet the candidate warmly by their actual name (not initials like B. R.), then ask a simple question about one of their skills." if is_first_warmup else "Ask the next simple question about one of their skills."}
 
