@@ -854,12 +854,18 @@ def build_system_prompt(session: dict, forced_type: str, extra: dict = None) -> 
     if force_hint:
         hint_instruction = "\nIMPORTANT: You MUST give a small hint in your question. Set hint_given=true. The hint should be a small nudge, not the full answer.\n"
 
+    # Get candidate projects
+    projects = r.get("key_projects", [])
+    projects_text = ", ".join(projects) if projects else "No projects listed"
+
     return f"""You are a senior VLSI technical interviewer conducting a professional mock interview.
 
 CANDIDATE:
 - Domain: {r["domain"].replace("_", " ")}
 - Level: {r["level"].replace("_", " ")} ({r.get("years_experience", 0)} years)
 - Tools: {", ".join(r.get("tools", []))}
+- Skills: {", ".join(r.get("skills", []))}
+- Projects: {projects_text}
 - Background: {r.get("background_summary", "")}
 
 INTERVIEW STATE:
@@ -887,7 +893,10 @@ TYPES:
 - contradiction: Use the exact question provided above — testing consistency
 - recovery_probe: Ask a SIMPLER follow-up question or break it down. Give a hint. NEVER repeat the same question. Example: If they don't know "What is clock skew?", ask "Have you heard of setup time?" instead.
 
-IMPORTANT: NEVER ask the same question twice. Each question must be DIFFERENT from previous questions.
+IMPORTANT:
+- NEVER ask the same question twice. Each question must be DIFFERENT from previous questions.
+- Ask questions based on candidate's SKILLS and PROJECTS listed above.
+- For projects: Ask what they did, challenges faced, tools used, results achieved.
 
 INTELLECTUAL HONESTY: "I don't know" = 6/10, warm response. "I don't know + reasoning" = 8/10.
 POOR ARTICULATION: correct terms but incomplete = quality "poor_articulation", ask practical_example next.
