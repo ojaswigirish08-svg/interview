@@ -1496,6 +1496,90 @@ Return ONLY valid JSON:
         **narrative
     }
 
+
+# ════════════════════════════════════════════════════════════
+# ASSIGNMENT GENERATOR
+# ════════════════════════════════════════════════════════════
+def generate_assignment(session: dict, report: dict) -> dict:
+    """Generate a practical assignment based on candidate's domain, skills, and interview performance."""
+    resume = session["resume"]
+    topic_perf = report.get("topic_performance", {})
+
+    # Identify strong and weak topics
+    strong_topics = [t for t, v in topic_perf.items() if v.get("rating") in ("Strong", "Adequate")]
+    weak_topics = [t for t, v in topic_perf.items() if v.get("rating") in ("Needs Work", "Weak")]
+
+    skills = resume.get("skills", [])
+    tools = resume.get("tools", [])
+    projects = resume.get("key_projects", [])
+    domain = resume.get("domain", "physical_design")
+    level = resume.get("level", "trained_fresher")
+
+    prompt = f"""You are a senior VLSI engineer creating a practical take-home assignment for an interview candidate.
+
+CANDIDATE PROFILE:
+- Domain: {domain.replace("_", " ")}
+- Level: {level.replace("_", " ")}
+- Skills: {", ".join(skills[:10])}
+- Tools: {", ".join(tools[:5])}
+- Projects: {", ".join(projects[:3]) if projects else "None listed"}
+
+INTERVIEW PERFORMANCE:
+- Overall Grade: {report.get("scores", {}).get("grade", "C")}
+- Strong Topics: {", ".join(strong_topics) if strong_topics else "None identified"}
+- Weak Topics: {", ".join(weak_topics) if weak_topics else "None identified"}
+- Trajectory: {report.get("trajectory", "unknown")}
+
+Create a practical assignment that:
+1. Tests hands-on ability in their domain using tools they know
+2. Covers both their strong areas (to confirm skill) and weak areas (to improve)
+3. Is achievable at their level but slightly challenging
+4. Has clear deliverables and evaluation criteria
+
+Return ONLY valid JSON:
+{{
+  "title": "Assignment title (concise)",
+  "objective": "1-2 sentence goal of the assignment",
+  "description": "Detailed description of what to do (3-5 sentences)",
+  "tasks": [
+    {{
+      "task_number": 1,
+      "title": "Task title",
+      "description": "What to do",
+      "skills_tested": ["skill1", "skill2"],
+      "expected_time": "X hours"
+    }}
+  ],
+  "deliverables": ["deliverable1", "deliverable2"],
+  "tools_required": ["tool1", "tool2"],
+  "evaluation_criteria": [
+    {{"criterion": "what is evaluated", "weight": "percentage"}}
+  ],
+  "total_time": "estimated total time",
+  "difficulty": "beginner|intermediate|advanced",
+  "tips": ["helpful tip 1", "helpful tip 2"]
+}}"""
+
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.4, max_tokens=1500)
+
+    if not result or "title" not in result:
+        # Fallback assignment
+        return {
+            "title": f"{domain.replace('_', ' ').title()} Practical Exercise",
+            "objective": f"Demonstrate hands-on ability in {domain.replace('_', ' ')}",
+            "description": f"Complete a practical exercise covering core {domain.replace('_', ' ')} concepts using the tools from your resume.",
+            "tasks": [{"task_number": 1, "title": "Core exercise", "description": f"Practice key {domain.replace('_', ' ')} concepts", "skills_tested": skills[:3], "expected_time": "2 hours"}],
+            "deliverables": ["Completed design files", "Brief report of approach"],
+            "tools_required": tools[:3] if tools else ["Industry standard tools"],
+            "evaluation_criteria": [{"criterion": "Technical correctness", "weight": "50%"}, {"criterion": "Methodology", "weight": "30%"}, {"criterion": "Documentation", "weight": "20%"}],
+            "total_time": "3-4 hours",
+            "difficulty": "intermediate",
+            "tips": ["Focus on fundamentals", "Document your approach"]
+        }
+
+    return result
+
+
 # ════════════════════════════════════════════════════════════
 # ROUTES
 # ════════════════════════════════════════════════════════════
@@ -1832,10 +1916,32 @@ async def submit_answer(data: AnswerSubmit):
     session["last_topic"] = topic
     session["last_question_type"] = result["question_type"]
 
+    # Check if candidate is struggling — last 4 consecutive interview answers all weak
+    struggling_end = False
+    if session["phase"] == "interview" and session["turn"] >= 8:
+        recent_interview = [
+            h for h in session["history"]
+            if h.get("evaluation") and h["phase"] == "interview"
+            and h.get("evaluation", {}).get("quality") not in ("warmup", None)
+        ]
+        if len(recent_interview) >= 4:
+            last_4 = recent_interview[-4:]
+            all_struggling = all(
+                h["evaluation"].get("quality") in ("weak", "honest_admission")
+                and (h["evaluation"].get("score") or 5) <= 3
+                for h in last_4
+            )
+            if all_struggling:
+                struggling_end = True
+                session["phase"] = "ended"
+                session["early_end_reason"] = "struggling"
+                print(f"[Interview] Early end — candidate struggled in last 4 questions")
+
     # Determine if interview should end
     should_end = (
         session["turn"] >= 22 or
         session["phase"] == "ended" or
+        struggling_end or
         result.get("warmup_decision") == "end_not_ready"
     )
 
@@ -1883,6 +1989,8 @@ async def generate_report_endpoint(data: ReportRequest):
     if not session:
         raise HTTPException(404, "Session not found")
     report = generate_report(session)
+    # Generate practical assignment based on interview performance
+    report["assignment"] = generate_assignment(session, report)
     return JSONResponse(report)
 
 if __name__ == "__main__":
