@@ -1500,10 +1500,27 @@ Return ONLY valid JSON:
 # ════════════════════════════════════════════════════════════
 # ASSIGNMENT GENERATOR
 # ════════════════════════════════════════════════════════════
-def generate_assignment(session: dict, report: dict) -> dict:
+def generate_assignment(session: dict, report: dict = None) -> dict:
     """Generate a practical assignment based on candidate's domain, skills, and interview performance."""
     resume = session["resume"]
-    topic_perf = report.get("topic_performance", {})
+
+    # Build topic performance from session history if no report provided
+    if report:
+        topic_perf = report.get("topic_performance", {})
+    else:
+        topic_perf = {}
+        scored = [h for h in session["history"]
+                  if h.get("evaluation") and h["phase"] == "interview"
+                  and h.get("evaluation", {}).get("quality") not in ("warmup", None)]
+        for h in scored:
+            t = h.get("topic", "general")
+            if not t: continue
+            topic_perf.setdefault(t, {"scores": []})
+            try: topic_perf[t]["scores"].append(int(h["evaluation"].get("score") or 5))
+            except: topic_perf[t]["scores"].append(5)
+        for t, data in topic_perf.items():
+            avg_t = sum(data["scores"]) / len(data["scores"])
+            data["rating"] = "Strong" if avg_t >= 7.5 else "Adequate" if avg_t >= 5.5 else "Needs Work" if avg_t >= 3.0 else "Weak"
 
     # Identify strong and weak topics
     strong_topics = [t for t, v in topic_perf.items() if v.get("rating") in ("Strong", "Adequate")]
@@ -1525,10 +1542,10 @@ CANDIDATE PROFILE:
 - Projects: {", ".join(projects[:3]) if projects else "None listed"}
 
 INTERVIEW PERFORMANCE:
-- Overall Grade: {report.get("scores", {}).get("grade", "C")}
+- Overall Grade: {report.get("scores", {}).get("grade", "C") if report else "In progress"}
 - Strong Topics: {", ".join(strong_topics) if strong_topics else "None identified"}
 - Weak Topics: {", ".join(weak_topics) if weak_topics else "None identified"}
-- Trajectory: {report.get("trajectory", "unknown")}
+- Trajectory: {report.get("trajectory", "unknown") if report else session.get("trajectory_type", "unknown")}
 
 Create a practical assignment that:
 1. Tests hands-on ability in their domain using tools they know
@@ -1791,6 +1808,12 @@ async def submit_answer(data: AnswerSubmit):
                 "question": "No problem. Please take your time to prepare and come back when you're ready. Good luck!",
                 "question_type": "farewell"
             }
+    elif session["phase"] == "assignment":
+        # Candidate responded to the assignment — evaluate and resume interview
+        session["phase"] = "interview"
+        session["assignment_response"] = data.answer
+        result = generate_question(session, data.answer)
+
     else:
         # Normal interview flow - Generate next question + evaluate previous
         result = generate_question(session, data.answer)
@@ -1916,6 +1939,44 @@ async def submit_answer(data: AnswerSubmit):
     session["last_topic"] = topic
     session["last_question_type"] = result["question_type"]
 
+    # Mid-interview assignment: trigger after ~10 technical questions (once only)
+    if (session["phase"] == "interview"
+        and not session.get("assignment_given")
+        and session["turn"] - session.get("warmup_turns", 3) >= 10):
+        session["phase"] = "assignment"
+        session["assignment_given"] = True
+        assignment = generate_assignment(session)
+        session["assignment_data"] = assignment
+        # Build a spoken intro for the assignment
+        assign_question = (
+            f"Now let's move to a practical assignment. Here it is: {assignment.get('title', 'Practical Exercise')}. "
+            f"{assignment.get('objective', '')} "
+            "Please walk me through how you would approach this."
+        )
+        # Record in history
+        entry = {
+            "turn": session["turn"], "phase": "assignment",
+            "question": assign_question, "question_type": "assignment",
+            "topic": "assignment", "difficulty": DIFFICULTY_LABELS[session["difficulty_level"]],
+            "answer": None, "evaluation": None, "behavioral_flags": [],
+            "answer_duration_sec": 0, "word_count": 0, "filler_rate": 0,
+            "pronoun_rate": 0, "thinking_pause_sec": 0, "input_mode": "text",
+            "correction_rate": 0, "above_level": False, "contradiction_inconsistency": False,
+        }
+        session["history"].append(entry)
+        session["turn"] += 1
+        audio = synthesize_speech(assign_question)
+        return JSONResponse({
+            "question": assign_question,
+            "question_type": "assignment",
+            "turn": session["turn"],
+            "phase": "assignment",
+            "audio": audio,
+            "difficulty": DIFFICULTY_LABELS[session["difficulty_level"]],
+            "should_end": False,
+            "assignment": assignment,
+        })
+
     # Check if candidate is struggling — last 4 consecutive interview answers all weak
     struggling_end = False
     if session["phase"] == "interview" and session["turn"] >= 8:
@@ -1989,8 +2050,11 @@ async def generate_report_endpoint(data: ReportRequest):
     if not session:
         raise HTTPException(404, "Session not found")
     report = generate_report(session)
-    # Generate practical assignment based on interview performance
-    report["assignment"] = generate_assignment(session, report)
+    # Reuse assignment from mid-interview if already generated, otherwise create new
+    if session.get("assignment_data"):
+        report["assignment"] = session["assignment_data"]
+    else:
+        report["assignment"] = generate_assignment(session, report)
     return JSONResponse(report)
 
 if __name__ == "__main__":

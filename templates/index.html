@@ -97,6 +97,7 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
 .tag-warmup{background:#fef9c3;color:#713f12}
 .tag-why_probe{background:#ffedd5;color:#9a3412}
 .tag-practical_example{background:#e0f2fe;color:#075985}
+.tag-assignment{background:#eef2ff;color:#4338ca}
 .tag-recovery_probe{background:#f0fdf4;color:#14532d}
 .arow{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .aav{width:36px;height:36px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -689,7 +690,8 @@ function displayQ(data) {
 
   const tl={definition:'Definition',scenario:'Scenario',personal_anchor:'Personal Experience',
     numerical:'Numerical Probe',contradiction:'Deep Dive',greeting:'Welcome',warmup:'Warmup',
-    why_probe:'Why Probe',practical_example:'Practical Example',recovery_probe:'Recovery'};
+    why_probe:'Why Probe',practical_example:'Practical Example',recovery_probe:'Recovery',
+    assignment:'Assignment'};
   const tag=document.getElementById('qtag');
   tag.textContent=tl[data.question_type]||data.question_type;
   tag.className='qtag tag-'+(data.question_type||'warmup');
@@ -703,7 +705,7 @@ function displayQ(data) {
 
   const phase=data.phase||S.currentPhase;
   document.getElementById('pbadge').className='pbadge '+((phase==='warmup'||phase==='greeting')?'warmup':'interview');
-  document.getElementById('plbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':'Technical Interview';
+  document.getElementById('plbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':(phase==='assignment'?'Assignment':'Technical Interview');
 
   const dm={foundational:1,basic:2,intermediate:3,advanced:4,expert:5};
   const lv=dm[data.difficulty]||2;
@@ -755,7 +757,7 @@ let analyser = null;
 let silenceStart = null;
 let speechDetected = false;
 const SILENCE_THRESHOLD = 15;
-const SILENCE_TIMEOUT = 3000;
+const SILENCE_TIMEOUT = 2000;
 
 async function startRec() {
   if(S.isRecording) return;

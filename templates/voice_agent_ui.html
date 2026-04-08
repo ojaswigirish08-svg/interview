@@ -259,6 +259,76 @@
         .question-num { font-family: 'DM Mono', monospace; font-size: 10px; color: #aaa; }
         .question-text { font-size: 13px; color: #333; line-height: 1.65; font-style: italic; }
 
+        /* Assignment Panel */
+        .assign-overlay {
+            display: none;
+            position: fixed; top: 0; left: 280px; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.97);
+            z-index: 100; overflow-y: auto;
+            padding: 32px 24px;
+        }
+        .assign-overlay.show { display: block; }
+        .assign-inner {
+            max-width: 640px; margin: 0 auto;
+        }
+        .assign-badge {
+            font-family: 'DM Mono', monospace; font-size: 9px; letter-spacing: 0.12em;
+            text-transform: uppercase; color: #6366f1; margin-bottom: 12px;
+        }
+        .assign-title {
+            font-size: 20px; font-weight: 500; color: #111; margin-bottom: 8px;
+        }
+        .assign-meta-row {
+            display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
+        }
+        .assign-chip {
+            font-family: 'DM Mono', monospace; font-size: 10px; padding: 3px 10px;
+            border-radius: 20px; border: 1px solid #e5e7eb; color: #666;
+        }
+        .assign-obj {
+            font-size: 13px; color: #6366f1; background: #eef2ff; border-radius: 8px;
+            padding: 10px 14px; margin-bottom: 16px; line-height: 1.5;
+        }
+        .assign-desc {
+            font-size: 13px; color: #555; line-height: 1.7; margin-bottom: 20px;
+        }
+        .assign-task-card {
+            background: #fafafa; border: 1px solid #ebebeb; border-radius: 8px;
+            padding: 14px; margin-bottom: 10px;
+        }
+        .assign-task-head {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 6px;
+        }
+        .assign-task-num {
+            width: 24px; height: 24px; border-radius: 50%; background: #111; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 11px; font-family: 'DM Mono', monospace; flex-shrink: 0;
+        }
+        .assign-task-title { font-size: 13px; font-weight: 500; }
+        .assign-task-desc { font-size: 12px; color: #777; padding-left: 34px; margin-bottom: 6px; line-height: 1.5; }
+        .assign-task-skills { display: flex; gap: 4px; flex-wrap: wrap; padding-left: 34px; }
+        .assign-task-skill {
+            font-family: 'DM Mono', monospace; font-size: 9px; padding: 2px 8px;
+            border-radius: 10px; background: #f3f4f6; color: #555;
+        }
+        .assign-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0;
+        }
+        .assign-box {
+            background: #fafafa; border: 1px solid #ebebeb; border-radius: 8px; padding: 12px;
+        }
+        .assign-box-label {
+            font-family: 'DM Mono', monospace; font-size: 9px; text-transform: uppercase;
+            letter-spacing: 0.08em; color: #aaa; margin-bottom: 8px;
+        }
+        .assign-box li { font-size: 12px; color: #555; margin-bottom: 4px; list-style: none; padding-left: 0; }
+        .assign-box li::before { content: ''; display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: #ccc; margin-right: 8px; vertical-align: middle; }
+        .assign-prompt {
+            font-size: 12px; color: #999; text-align: center; margin-top: 20px;
+            font-family: 'DM Mono', monospace; padding: 10px;
+            border-top: 1px solid #ebebeb;
+        }
+
         /* Stats */
         .stats-row {
             display: grid; grid-template-columns: repeat(2, 1fr);
@@ -412,6 +482,11 @@
         </div>
 
     </div>
+</div>
+
+<!-- Assignment Overlay Panel -->
+<div class="assign-overlay" id="assign-overlay">
+    <div class="assign-inner" id="assign-content"></div>
 </div>
 
 <script>
@@ -639,12 +714,59 @@
     function displayQuestion(data) {
         if (interviewEnded) return;
 
+        // Hide assignment overlay when moving past assignment phase
+        if (data.phase !== 'assignment') {
+            document.getElementById('assign-overlay').classList.remove('show');
+        }
+
         document.getElementById('question-text').textContent = data.question;
         updateQuestionCount(data.turn || qCount + 1);
 
         const phase = data.phase || 'interview';
-        document.getElementById('live-badge').textContent = (phase === 'warmup' || phase === 'greeting') ? 'warmup' : 'live';
+        document.getElementById('live-badge').textContent = (phase === 'warmup' || phase === 'greeting') ? 'warmup' : (phase === 'assignment' ? 'assignment' : 'live');
         document.getElementById('live-badge').classList.add('active');
+
+        // Show assignment panel if assignment data is present
+        if (data.assignment && data.phase === 'assignment') {
+            showAssignment(data.assignment);
+        }
+    }
+
+    function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+    function showAssignment(a) {
+        const tasks = (a.tasks||[]).map(t => `
+            <div class="assign-task-card">
+                <div class="assign-task-head">
+                    <div class="assign-task-num">${t.task_number||''}</div>
+                    <div class="assign-task-title">${esc(t.title||'')}</div>
+                </div>
+                <div class="assign-task-desc">${esc(t.description||'')}</div>
+                <div class="assign-task-skills">${(t.skills_tested||[]).map(s=>'<span class="assign-task-skill">'+esc(s)+'</span>').join('')}</div>
+            </div>`).join('');
+
+        const deliverables = (a.deliverables||[]).map(d => '<li>'+esc(d)+'</li>').join('');
+        const tools = (a.tools_required||[]).map(t => '<li>'+esc(t)+'</li>').join('');
+        const criteria = (a.evaluation_criteria||[]).map(c => '<li><strong>'+esc(c.criterion||c)+'</strong>'+(c.weight?' — '+esc(c.weight):'')+'</li>').join('');
+
+        document.getElementById('assign-content').innerHTML = `
+            <div class="assign-badge">practical assignment</div>
+            <div class="assign-title">${esc(a.title)}</div>
+            <div class="assign-meta-row">
+                ${a.total_time ? '<span class="assign-chip">'+esc(a.total_time)+'</span>' : ''}
+                ${a.difficulty ? '<span class="assign-chip">'+esc(a.difficulty)+'</span>' : ''}
+            </div>
+            ${a.objective ? '<div class="assign-obj">'+esc(a.objective)+'</div>' : ''}
+            ${a.description ? '<div class="assign-desc">'+esc(a.description)+'</div>' : ''}
+            ${tasks}
+            <div class="assign-grid">
+                ${deliverables ? '<div class="assign-box"><div class="assign-box-label">deliverables</div><ul>'+deliverables+'</ul></div>' : ''}
+                ${tools ? '<div class="assign-box"><div class="assign-box-label">tools required</div><ul>'+tools+'</ul></div>' : ''}
+            </div>
+            ${criteria ? '<div class="assign-box"><div class="assign-box-label">evaluation criteria</div><ul>'+criteria+'</ul></div>' : ''}
+            <div class="assign-prompt">speak or describe your approach to this assignment</div>
+        `;
+        document.getElementById('assign-overlay').classList.add('show');
     }
 
     async function playAudio(text, b64Audio) {
