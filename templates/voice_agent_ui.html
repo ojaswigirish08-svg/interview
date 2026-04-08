@@ -643,7 +643,7 @@
         updateQuestionCount(data.turn || qCount + 1);
 
         const phase = data.phase || 'interview';
-        document.getElementById('live-badge').textContent = phase === 'warmup' ? 'warmup' : 'live';
+        document.getElementById('live-badge').textContent = (phase === 'warmup' || phase === 'greeting') ? 'warmup' : 'live';
         document.getElementById('live-badge').classList.add('active');
     }
 

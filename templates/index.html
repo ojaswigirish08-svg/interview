@@ -662,7 +662,7 @@ function displayQ(data) {
   document.getElementById('transcript-box').style.display = 'none';  // Hide previous transcript
 
   const tl={definition:'Definition',scenario:'Scenario',personal_anchor:'Personal Experience',
-    numerical:'Numerical Probe',contradiction:'Deep Dive',warmup:'Warmup',
+    numerical:'Numerical Probe',contradiction:'Deep Dive',greeting:'Welcome',warmup:'Warmup',
     why_probe:'Why Probe',practical_example:'Practical Example',recovery_probe:'Recovery'};
   const tag=document.getElementById('qtag');
   tag.textContent=tl[data.question_type]||data.question_type;
@@ -676,8 +676,8 @@ function displayQ(data) {
   }
 
   const phase=data.phase||S.currentPhase;
-  document.getElementById('pbadge').className='pbadge '+(phase==='warmup'?'warmup':'interview');
-  document.getElementById('plbl').textContent=phase==='warmup'?'Warmup':'Technical Interview';
+  document.getElementById('pbadge').className='pbadge '+((phase==='warmup'||phase==='greeting')?'warmup':'interview');
+  document.getElementById('plbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':'Technical Interview';
 
   const dm={foundational:1,basic:2,intermediate:3,advanced:4,expert:5};
   const lv=dm[data.difficulty]||2;

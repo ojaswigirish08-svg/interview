@@ -1037,12 +1037,27 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 # ════════════════════════════════════════════════════════════
 # WARMUP NODE - Skill-based warmup questions
 # ════════════════════════════════════════════════════════════
+def generate_greeting(session: dict) -> dict:
+    """Generate a greeting message before warmup questions begin"""
+    resume = session.get("resume", {})
+    candidate_name = resume.get("candidate_name", "Candidate")
+    greeting = (
+        f"Hi {candidate_name}! Welcome to the interview. "
+        "We'll start with a few warm-up questions, then move into the technical round. "
+        "Let's get started!"
+    )
+    return {
+        "question": greeting,
+        "question_type": "greeting",
+        "topic": "greeting",
+        "difficulty": "basic",
+    }
+
+
 def generate_warmup_question(session: dict, candidate_answer: str = None) -> dict:
     """Generate warmup questions based on user's resume skills"""
     resume = session.get("resume", {})
     warmup_count = session.get("warmup_turns", 0)
-    is_first_warmup = warmup_count == 0
-
     # Extract skills and info from resume
     import random
     candidate_name = resume.get("candidate_name", "Candidate")
@@ -1091,7 +1106,7 @@ Previously Asked Questions (DO NOT repeat these):
 {prev_questions_text}
 
 
-{"Greet the candidate warmly by their actual name (not initials like B. R.), then ask a simple question about one of their skills." if is_first_warmup else "Ask the next simple question about one of their skills."}
+Ask a simple question about one of their skills.
 
 Rules:
 - Ask questions ONLY about the skills listed above
@@ -1113,7 +1128,7 @@ Return ONLY this JSON:
         # Fallback - pick a random skill
         import random
         skill = random.choice(remaining_skills) if remaining_skills else (all_skills[0] if all_skills else "VLSI")
-        question = f"Hello {candidate_name}! Welcome to the interview. Let's start with a simple question about {skill}. Can you briefly explain what it is?" if is_first_warmup else f"Can you tell me about {skill}?"
+        question = f"Can you tell me about {skill}?"
         return {
             "question": question,
             "question_type": "warmup",
@@ -1520,7 +1535,7 @@ async def create_session(data: SessionCreate):
     resume = parse_resume(data.resume_text)
     session = {
         "id": sid, "mode": data.mode, "resume": resume,
-        "phase": "warmup", "turn": 0, "warmup_turns": 0,
+        "phase": "greeting", "turn": 0, "warmup_turns": 0,
         "warmup_performance": "pending", "warmup_conversation": [],
         "difficulty_level": 1, "consecutive_strong": 0, "consecutive_weak": 0,
         "history": [], "topics_covered": [], "anchor_count": 0,
@@ -1539,9 +1554,9 @@ async def create_session(data: SessionCreate):
     }
     sessions[sid] = session
 
-    # Pre-generate first warmup question in background (for faster start)
+    # Pre-generate greeting in background (for faster start)
     try:
-        first_q = generate_warmup_question(session)
+        first_q = generate_greeting(session)
         first_audio = synthesize_speech(first_q["question"])
         session["cached_first_question"] = first_q
         session["cached_first_audio"] = first_audio
@@ -1570,14 +1585,17 @@ async def start_interview(data: dict):
     if not session:
         raise HTTPException(404, "Session not found")
 
-    # Use cached first question if available (faster start)
-    if session["phase"] == "warmup" and session.get("cached_first_question"):
+    # Use cached greeting/question if available (faster start)
+    if session["phase"] == "greeting" and session.get("cached_first_question"):
         result = session["cached_first_question"]
         audio = session.get("cached_first_audio", "")
         # Clear cache after use
         session["cached_first_question"] = None
         session["cached_first_audio"] = None
-        print("[Interview] Using cached first question - instant start!")
+        print("[Interview] Using cached greeting - instant start!")
+    elif session["phase"] == "greeting":
+        result = generate_greeting(session)
+        audio = synthesize_speech(result["question"])
     elif session["phase"] == "warmup":
         result = generate_warmup_question(session)
         audio = synthesize_speech(result["question"])
@@ -1643,8 +1661,14 @@ async def submit_answer(data: AnswerSubmit):
         current_entry["behavioral_flags"] = dev["flags"]
         current_entry["behavioral_deviation"] = dev["deviation_score"]
 
+    # Phase transition for greeting -> warmup
+    if session["phase"] == "greeting":
+        session["phase"] = "warmup"
+        result = generate_warmup_question(session)
+        session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+
     # Phase transition for warmup
-    if session["phase"] == "warmup":
+    elif session["phase"] == "warmup":
         session["warmup_turns"] += 1
         session["warmup_conversation"].append(f"Candidate: {data.answer}")
 
