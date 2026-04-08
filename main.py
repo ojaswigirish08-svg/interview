@@ -1037,10 +1037,18 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 # ════════════════════════════════════════════════════════════
 # WARMUP NODE - Skill-based warmup questions
 # ════════════════════════════════════════════════════════════
+def strip_initials(name: str) -> str:
+    """Strip single-letter initials (like B. R. S.) from a name, keeping actual name parts."""
+    import re
+    parts = name.split()
+    actual_parts = [p for p in parts if not re.match(r'^[A-Z]\.$', p)]
+    return " ".join(actual_parts) if actual_parts else name
+
+
 def generate_greeting(session: dict) -> dict:
     """Generate a greeting message before warmup questions begin"""
     resume = session.get("resume", {})
-    candidate_name = resume.get("candidate_name", "Candidate")
+    candidate_name = strip_initials(resume.get("candidate_name", "Candidate"))
     greeting = (
         f"Hi {candidate_name}! Welcome to the interview. "
         "We'll start with a few warm-up questions, then move into the technical round. "
@@ -1060,7 +1068,7 @@ def generate_warmup_question(session: dict, candidate_answer: str = None) -> dic
     warmup_count = session.get("warmup_turns", 0)
     # Extract skills and info from resume
     import random
-    candidate_name = resume.get("candidate_name", "Candidate")
+    candidate_name = strip_initials(resume.get("candidate_name", "Candidate"))
     skills = resume.get("skills", [])
     tools = resume.get("tools", [])
     all_skills = skills + tools
