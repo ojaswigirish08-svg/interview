@@ -39,7 +39,7 @@ polly_client = boto3.client(
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
 # Load reference audio for Mistral voice cloning
-_ref_audio_path = os.path.join(os.path.dirname(__file__), "output.mp3")
+_ref_audio_path = os.path.join(os.path.dirname(__file__), "ranjitha_4dmjitkw.mp3")
 if MISTRAL_API_KEY and os.path.exists(_ref_audio_path):
     with open(_ref_audio_path, "rb") as _f:
         MISTRAL_TTS_REF_AUDIO = base64.b64encode(_f.read()).decode()
