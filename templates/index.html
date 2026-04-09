@@ -97,7 +97,6 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
 .tag-warmup{background:#fef9c3;color:#713f12}
 .tag-why_probe{background:#ffedd5;color:#9a3412}
 .tag-practical_example{background:#e0f2fe;color:#075985}
-.tag-assignment{background:#eef2ff;color:#4338ca}
 .tag-recovery_probe{background:#f0fdf4;color:#14532d}
 .arow{display:flex;align-items:center;gap:12px;margin-bottom:12px}
 .aav{width:36px;height:36px;border-radius:50%;background:var(--acc);display:flex;align-items:center;justify-content:center;flex-shrink:0}
@@ -227,32 +226,6 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
 .ititle{font-weight:700;font-size:14px;margin-bottom:6px;font-family:'Syne',sans-serif}
 .iflag{font-size:13px;margin-top:5px;padding-left:12px}
 .next-mock{background:var(--g50);border:1px solid var(--g200);border-radius:var(--r);padding:20px;font-size:15px;line-height:1.6}
-
-/* ASSIGNMENT PANEL */
-.assign-panel{background:#fff;border:2px solid var(--acc);border-radius:14px;padding:28px;box-shadow:0 4px 24px rgba(99,102,241,.08)}
-.assign-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px}
-.assign-title{font-size:20px;font-weight:800;font-family:'Syne',sans-serif;color:var(--g800)}
-.assign-meta{display:flex;gap:8px;flex-wrap:wrap}
-.assign-chip{font-size:11px;font-weight:700;font-family:'DM Mono',monospace;padding:4px 10px;border-radius:20px;text-transform:uppercase}
-.assign-chip.time{background:#eff6ff;border:1px solid #bfdbfe;color:#1d4ed8}
-.assign-chip.diff{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d}
-.assign-obj{font-size:15px;color:var(--acc);font-weight:600;margin-bottom:12px;padding:10px 14px;background:var(--acd);border-radius:8px}
-.assign-desc{font-size:14px;line-height:1.7;color:var(--g700);margin-bottom:20px}
-.assign-tasks{display:flex;flex-direction:column;gap:12px;margin-bottom:20px}
-.assign-task{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:16px}
-.assign-task-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
-.assign-task-num{width:28px;height:28px;border-radius:50%;background:var(--acc);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;font-family:'DM Mono',monospace;flex-shrink:0}
-.assign-task-title{font-weight:700;font-size:14px}
-.assign-task-desc{font-size:13px;color:var(--g600);margin-bottom:8px;padding-left:38px}
-.assign-task-skills{display:flex;gap:6px;flex-wrap:wrap;padding-left:38px}
-.assign-task-skill{font-size:10px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:10px;background:#ede9fe;color:#5b21b6;font-weight:600}
-.assign-task-time{font-size:11px;font-family:'DM Mono',monospace;color:var(--g400);padding-left:38px;margin-top:6px}
-.assign-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-.assign-box{background:var(--g50);border:1px solid var(--g200);border-radius:10px;padding:16px}
-.assign-box-title{font-size:12px;font-weight:700;font-family:'DM Mono',monospace;text-transform:uppercase;color:var(--g400);letter-spacing:.5px;margin-bottom:10px}
-.assign-box li{font-size:13px;color:var(--g700);margin-bottom:6px;padding-left:4px}
-.assign-tips{display:flex;flex-direction:column;gap:6px}
-.assign-tip{font-size:13px;color:var(--g600);padding:8px 12px;background:#fefce8;border:1px solid #fde047;border-radius:6px}
 .ctable{width:100%;border-collapse:collapse;font-size:13px}
 .ctable th{background:var(--g50);padding:8px 12px;text-align:left;font-weight:600;border-bottom:2px solid var(--g200)}
 .ctable td{padding:8px 12px;border-bottom:1px solid var(--g200)}
@@ -690,8 +663,7 @@ function displayQ(data) {
 
   const tl={definition:'Definition',scenario:'Scenario',personal_anchor:'Personal Experience',
     numerical:'Numerical Probe',contradiction:'Deep Dive',greeting:'Welcome',warmup:'Warmup',
-    why_probe:'Why Probe',practical_example:'Practical Example',recovery_probe:'Recovery',
-    assignment:'Assignment'};
+    why_probe:'Why Probe',practical_example:'Practical Example',recovery_probe:'Recovery'};
   const tag=document.getElementById('qtag');
   tag.textContent=tl[data.question_type]||data.question_type;
   tag.className='qtag tag-'+(data.question_type||'warmup');
@@ -705,7 +677,7 @@ function displayQ(data) {
 
   const phase=data.phase||S.currentPhase;
   document.getElementById('pbadge').className='pbadge '+((phase==='warmup'||phase==='greeting')?'warmup':'interview');
-  document.getElementById('plbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':(phase==='assignment'?'Assignment':'Technical Interview');
+  document.getElementById('plbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':'Technical Interview';
 
   const dm={foundational:1,basic:2,intermediate:3,advanced:4,expert:5};
   const lv=dm[data.difficulty]||2;
@@ -1116,46 +1088,6 @@ function renderReport(r) {
       ${iflags||'<div style="font-size:13px;color:var(--gr);margin-top:8px">No suspicious signals detected.</div>'}
     </div>`);
 
-  // Assignment panel
-  const a=r.assignment||{};
-  const assignTasks=(a.tasks||[]).map(t=>`
-    <div class="assign-task">
-      <div class="assign-task-head">
-        <div class="assign-task-num">${t.task_number||''}</div>
-        <div class="assign-task-title">${esc(t.title||'')}</div>
-      </div>
-      <div class="assign-task-desc">${esc(t.description||'')}</div>
-      <div class="assign-task-skills">${(t.skills_tested||[]).map(s=>`<span class="assign-task-skill">${esc(s)}</span>`).join('')}</div>
-      ${t.expected_time?`<div class="assign-task-time">${esc(t.expected_time)}</div>`:''}
-    </div>`).join('');
-
-  const assignDeliverables=(a.deliverables||[]).map(d=>`<li>${esc(d)}</li>`).join('');
-  const assignTools=(a.tools_required||[]).map(t=>`<li>${esc(t)}</li>`).join('');
-  const assignCriteria=(a.evaluation_criteria||[]).map(c=>`<li><strong>${esc(c.criterion||c)}</strong>${c.weight?' — '+esc(c.weight):''}</li>`).join('');
-  const assignTips=(a.tips||[]).map(t=>`<div class="assign-tip">${esc(t)}</div>`).join('');
-
-  const secAssign=a.title?`<div class="rsec">
-    <div class="rstitle">Practical Assignment</div>
-    <div class="assign-panel">
-      <div class="assign-header">
-        <div class="assign-title">${esc(a.title)}</div>
-        <div class="assign-meta">
-          ${a.total_time?`<span class="assign-chip time">${esc(a.total_time)}</span>`:''}
-          ${a.difficulty?`<span class="assign-chip diff">${esc(a.difficulty)}</span>`:''}
-        </div>
-      </div>
-      ${a.objective?`<div class="assign-obj">${esc(a.objective)}</div>`:''}
-      ${a.description?`<div class="assign-desc">${esc(a.description)}</div>`:''}
-      ${assignTasks?`<div class="assign-tasks">${assignTasks}</div>`:''}
-      <div class="assign-grid">
-        ${assignDeliverables?`<div class="assign-box"><div class="assign-box-title">Deliverables</div><ul>${assignDeliverables}</ul></div>`:''}
-        ${assignTools?`<div class="assign-box"><div class="assign-box-title">Tools Required</div><ul>${assignTools}</ul></div>`:''}
-      </div>
-      ${assignCriteria?`<div class="assign-box" style="margin-bottom:16px"><div class="assign-box-title">Evaluation Criteria</div><ul>${assignCriteria}</ul></div>`:''}
-      ${assignTips?`<div class="assign-tips">${assignTips}</div>`:''}
-    </div>
-  </div>`:'';
-
   document.getElementById('rbody').innerHTML=`
     <div class="rhead">
       <div class="rtitle">Your <span>Performance Report</span></div>
@@ -1166,7 +1098,6 @@ function renderReport(r) {
     ${metaRow}
     ${sec1}${sec2}${secTopic}${sec3}${sec4}${sec5}${sec5b}${sec5c}
     ${secCont}${secNM}${sec6}${sec7}${sec8}${secInt}
-    ${secAssign}
     <div class="dlrow">
       <button class="btn btn-p" onclick="dlReport()">Download Report</button>
       <button class="btn btn-s" onclick="window.location.reload()">Take Another Mock</button>
