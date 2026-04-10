@@ -36,6 +36,16 @@ polly_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
+# Cerebras (fast LLM for resume parsing)
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+cerebras_client = None
+if CEREBRAS_API_KEY:
+    cerebras_client = OpenAI(
+        api_key=CEREBRAS_API_KEY,
+        base_url="https://api.cerebras.ai/v1"
+    )
+    print("Cerebras LLM ready (for resume parsing).")
+
 # Groq Whisper (primary STT)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 groq_client = None
@@ -228,6 +238,42 @@ def safe_json(text: str):
         pass
     return None
 
+def call_cerebras(messages: list, temperature=0.5, max_tokens=1000) -> str:
+    """Fast LLM call via Cerebras. Falls back to GPT-4o-mini."""
+    if cerebras_client:
+        try:
+            resp = cerebras_client.chat.completions.create(
+                model="llama3.1-8b",
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"Cerebras failed, falling back to GPT-4o-mini: {e}")
+    return call_llm(messages, temperature, max_tokens)
+
+
+def call_cerebras_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -> dict:
+    """Fast JSON LLM call via Cerebras with fallback."""
+    for attempt in range(retries + 1):
+        try:
+            raw = call_cerebras(messages, temperature=temperature, max_tokens=max_tokens)
+            result = safe_json(raw)
+            if result:
+                return result
+            if attempt < retries:
+                messages = messages + [
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": "Return ONLY valid JSON. No markdown, no explanation."}
+                ]
+        except Exception as e:
+            print(f"Cerebras JSON attempt {attempt+1} failed: {e}")
+            if attempt == retries:
+                raise
+    return {}
+
+
 def call_llm_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -> dict:
     for attempt in range(retries + 1):
         try:
@@ -292,7 +338,7 @@ FIELD INSTRUCTIONS:
 - domain: analog_layout | physical_design | design_verification (classify based on skills/experience)
 - level: fresh_graduate (0yr) | trained_fresher (0-1yr) | experienced_junior (1-3yr) | experienced_senior (3+yr)"""
 
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=1000)
+    result = call_cerebras_json([{"role": "user", "content": prompt}], temperature=0.1, max_tokens=1000)
     if result and "is_vlsi_suitable" in result:
         # Ensure candidate_name exists
         if "candidate_name" not in result or not result["candidate_name"]:
@@ -1035,7 +1081,7 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     messages[0] = {"role": "system", "content": enhanced_prompt}
 
-    result = call_llm_json(messages, temperature=0.65, max_tokens=700)
+    result = call_cerebras_json(messages, temperature=0.65, max_tokens=700)
 
     if not result or "question" not in result:
         fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
@@ -1152,7 +1198,7 @@ Return ONLY this JSON:
 """
 
     # Higher temperature for more varied questions
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=300)
+    result = call_cerebras_json([{"role": "user", "content": prompt}], temperature=0.8, max_tokens=300)
 
     if not result or "question" not in result:
         # Fallback - pick a random skill
@@ -1498,7 +1544,7 @@ Return ONLY valid JSON:
   "next_mock_recommendation": "Specific topics, difficulty level, whether lab/hands-on should come first"
 }}"""
 
-    narrative = call_llm_json(
+    narrative = call_cerebras_json(
         [{"role": "user", "content": narrative_prompt}],
         temperature=0.3, max_tokens=2500, retries=2
     )
