@@ -2047,8 +2047,14 @@ async def generate_report_endpoint(data: ReportRequest):
     session = sessions.get(data.session_id)
     if not session:
         raise HTTPException(404, "Session not found")
-    report = generate_report(session)
-    return JSONResponse(report)
+    try:
+        report = generate_report(session)
+        return JSONResponse(report)
+    except Exception as e:
+        print(f"[Report] Error generating report: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Report generation failed: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=False)

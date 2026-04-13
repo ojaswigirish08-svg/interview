@@ -1076,12 +1076,25 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_id: sessionId })
                 });
+                if (!r.ok) {
+                    const err = await r.text();
+                    console.error('Report API error:', r.status, err);
+                    document.getElementById('sub-label').textContent = r.status === 404
+                        ? 'session expired — please start a new interview'
+                        : 'server error generating report — check console';
+                    return;
+                }
                 const report = await r.json();
+                if (!report.scores) {
+                    console.error('Invalid report data:', report);
+                    document.getElementById('sub-label').textContent = 'invalid report data — check console';
+                    return;
+                }
                 localStorage.setItem('interview_report', JSON.stringify(report));
                 window.location.href = '/?show_report=1';
             } catch (e) {
                 console.error('Report error:', e);
-                document.getElementById('sub-label').textContent = 'error generating report';
+                document.getElementById('sub-label').textContent = 'network error — check if server is running';
             }
             return;
         }
