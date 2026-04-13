@@ -599,11 +599,11 @@ def count_active_signals(session: dict, scored_history: list) -> int:
     if session.get("smooth_talker_detected"): count += 1
 
     honest_count = sum(1 for h in scored_history
-                       if h.get("evaluation", {}).get("quality") == "honest_admission")
+                       if (h.get("evaluation") or {}).get("quality") == "honest_admission")
     if len(scored_history) >= 8 and honest_count == 0: count += 1
 
     df_count = sum(1 for h in scored_history
-                   if h.get("evaluation", {}).get("quadrant") == "dangerous_fake")
+                   if (h.get("evaluation") or {}).get("quadrant") == "dangerous_fake")
     if df_count >= 3: count += 1
 
     # Contradiction flag
@@ -631,7 +631,7 @@ def compute_topic_suspicion(session: dict, scored_history: list) -> dict:
         prev_tab = [e for e in anticheat
                     if e["event_type"] == "tab_switch"
                     and e["turn"] == h.get("turn", 0) - 1]
-        if prev_tab and h.get("evaluation", {}).get("quality") == "strong":
+        if prev_tab and (h.get("evaluation") or {}).get("quality") == "strong":
             topic_suspicion[topic]["score"] += 20
             topic_suspicion[topic]["flags"].append(
                 f"Tab switch immediately before strong answer on {topic} at turn {h['turn']}"
@@ -725,13 +725,13 @@ def compute_suspicion_score(session: dict, scored_history: list) -> dict:
 
     # Signal 10: Zero honest admissions (suspicious if full interview)
     honest_count = sum(1 for h in scored_history
-                       if h.get("evaluation", {}).get("quality") == "honest_admission")
+                       if (h.get("evaluation") or {}).get("quality") == "honest_admission")
     if len(scored_history) >= 8 and honest_count == 0:
         suspicion += 12
         flags.append("Zero honest admissions in full interview — genuine candidates always have knowledge limits")
 
     # Signal 11: Dangerous fake quadrant pattern
-    df_turns = [h for h in scored_history if h.get("evaluation", {}).get("quadrant") == "dangerous_fake"]
+    df_turns = [h for h in scored_history if (h.get("evaluation") or {}).get("quadrant") == "dangerous_fake"]
     if len(df_turns) >= 3:
         suspicion += len(df_turns) * 8
         flags.append(f"Confident + wrong pattern at turns {', '.join(str(h['turn']) for h in df_turns[:3])}")
@@ -1411,7 +1411,7 @@ def generate_report(session: dict) -> dict:
 
     scored = [h for h in history
               if h.get("evaluation")
-              and h.get("evaluation", {}).get("quality") not in ("warmup", None)
+              and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)
               and h["phase"] != "warmup"]
 
     raw_scores = []
@@ -1435,7 +1435,7 @@ def generate_report(session: dict) -> dict:
     difficulties = [h.get("difficulty", "basic") for h in scored]
     max_difficulty = max(difficulties, key=lambda d: diff_order.get(d, 0)) if difficulties else "basic"
 
-    quadrants = [h.get("evaluation", {}).get("quadrant", "") for h in scored]
+    quadrants = [(h.get("evaluation") or {}).get("quadrant", "") for h in scored]
     df_count = quadrants.count("dangerous_fake")
     gn_count = quadrants.count("genuine_nervous")
     ge_count = quadrants.count("genuine_expert")
@@ -1451,7 +1451,7 @@ def generate_report(session: dict) -> dict:
         behavioral_profile = "Mixed Profile"
 
     honest_admissions = sum(1 for h in scored
-                            if h.get("evaluation", {}).get("quality") == "honest_admission")
+                            if (h.get("evaluation") or {}).get("quality") == "honest_admission")
 
     behavioral_score = 55
     behavioral_score += min(20, honest_admissions * 7)
@@ -1520,9 +1520,9 @@ def generate_report(session: dict) -> dict:
         f"[T{h['turn']}] {h.get('question_type','?')}/{h.get('difficulty','?')} topic={h.get('topic','?')}\n"
         f"Q: {h['question']}\n"
         f"A: {(h.get('answer') or '[no answer]')[:300]}\n"
-        f"Eval: quality={h.get('evaluation',{}).get('quality','?')} score={h.get('evaluation',{}).get('score','?')} "
-        f"quadrant={h.get('evaluation',{}).get('quadrant','?')} confidence={h.get('evaluation',{}).get('confidence_level','?')}\n"
-        f"Notes: {h.get('evaluation',{}).get('notes','')}"
+        f"Eval: quality={(h.get('evaluation') or {}).get('quality','?')} score={(h.get('evaluation') or {}).get('score','?')} "
+        f"quadrant={(h.get('evaluation') or {}).get('quadrant','?')} confidence={(h.get('evaluation') or {}).get('confidence_level','?')}\n"
+        f"Notes: {(h.get('evaluation') or {}).get('notes','')}"
         for h in history if h["phase"] != "warmup"
     ])[:5500]
 
@@ -1946,7 +1946,7 @@ async def submit_answer(data: AnswerSubmit):
         # Update trajectory
         sc_hist = [h for h in session["history"]
                    if h.get("evaluation")
-                   and h.get("evaluation", {}).get("quality") not in ("warmup", None)
+                   and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)
                    and h["phase"] != "warmup"]
         sc_list = []
         for h in sc_hist:
@@ -1981,7 +1981,7 @@ async def submit_answer(data: AnswerSubmit):
         recent_interview = [
             h for h in session["history"]
             if h.get("evaluation") and h["phase"] == "interview"
-            and h.get("evaluation", {}).get("quality") not in ("warmup", None)
+            and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)
         ]
         if len(recent_interview) >= 4:
             last_4 = recent_interview[-4:]
@@ -2074,7 +2074,7 @@ async def admin_sessions():
     for sid, session in sessions.items():
         scored = [h for h in session["history"]
                   if h.get("evaluation") and h["phase"] != "warmup"
-                  and h.get("evaluation", {}).get("quality") not in ("warmup", None)]
+                  and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)]
         scores = []
         for h in scored:
             try: scores.append(int(h["evaluation"].get("score") or 5))
@@ -2104,7 +2104,7 @@ async def admin_session_detail(session_id: str):
     history = session["history"]
     scored = [h for h in history
               if h.get("evaluation") and h["phase"] != "warmup"
-              and h.get("evaluation", {}).get("quality") not in ("warmup", None)]
+              and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)]
 
     turn_log = []
     for h in history:
@@ -2152,7 +2152,7 @@ async def admin_session_detail(session_id: str):
             "turn": h["turn"],
             "score": int(h["evaluation"].get("score") or 5),
             "topic": h.get("topic",""),
-            "quadrant": h.get("evaluation",{}).get("quadrant","")
+            "quadrant": (h.get("evaluation") or {}).get("quadrant","")
         })
         except: pass
 
