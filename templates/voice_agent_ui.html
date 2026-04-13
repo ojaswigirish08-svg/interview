@@ -288,6 +288,63 @@
         .ctrl-btn.primary:hover { background: #333; }
         .ctrl-btn.danger { color: #aaa; }
         .ctrl-btn.danger:hover { background: #fff5f5; color: #c44; border-color: #fcc; }
+
+        /* CANDIDATE CAMERA PIP */
+        .cam-pip {
+            position: fixed;
+            bottom: 80px;
+            right: 24px;
+            width: 180px;
+            height: 135px;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1.5px solid #e0e0e0;
+            background: #1a1a1a;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+            z-index: 50;
+            cursor: grab;
+            transition: box-shadow 0.2s;
+        }
+        .cam-pip:hover { box-shadow: 0 6px 28px rgba(0,0,0,0.18); }
+        .cam-pip.dragging { cursor: grabbing; box-shadow: 0 8px 32px rgba(0,0,0,0.22); }
+        .cam-pip video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        .cam-pip-header {
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            padding: 5px 8px;
+            background: linear-gradient(180deg, rgba(0,0,0,0.5) 0%, transparent 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .cam-pip-label {
+            font-family: 'DM Mono', monospace;
+            font-size: 8px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: rgba(255,255,255,0.8);
+        }
+        .cam-pip-dot {
+            width: 6px; height: 6px;
+            border-radius: 50%;
+            background: #555;
+            transition: background 0.3s;
+        }
+        .cam-pip-dot.active { background: #e53e3e; animation: cam-blink 1.5s infinite; }
+        @keyframes cam-blink { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+        .cam-pip-placeholder {
+            width: 100%; height: 100%;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            color: #555; font-size: 11px;
+            gap: 6px;
+        }
+        .cam-pip-placeholder svg { width: 28px; height: 28px; opacity: 0.4; }
     </style>
 </head>
 <body>
@@ -414,12 +471,76 @@
     </div>
 </div>
 
+<!-- CANDIDATE CAMERA PIP -->
+<div class="cam-pip" id="cam-pip">
+    <div class="cam-pip-header">
+        <span class="cam-pip-label">monitoring</span>
+        <span class="cam-pip-dot" id="cam-dot"></span>
+    </div>
+    <video id="cam-video" autoplay muted playsinline></video>
+    <div class="cam-pip-placeholder" id="cam-placeholder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+        <span>camera off</span>
+    </div>
+</div>
+
 <script>
     let sessionOn = false, secs = 0, qCount = 0, ticker = null, orbState = 'idle';
     let interviewEnded = false;  // Flag to completely stop interview
 
     function setOrb(s) { orbState = s; document.getElementById('orb').className = 'orb ' + s; }
     function fmt(s) { return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }
+
+    // ════════════════════════════════════════════════════════════
+    // CANDIDATE CAMERA PIP
+    // ════════════════════════════════════════════════════════════
+    (function initCameraPip() {
+        const video = document.getElementById('cam-video');
+        const placeholder = document.getElementById('cam-placeholder');
+        const camDot = document.getElementById('cam-dot');
+        const pip = document.getElementById('cam-pip');
+
+        // Start camera
+        navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' }, audio: false })
+            .then(stream => {
+                video.srcObject = stream;
+                video.style.display = 'block';
+                placeholder.style.display = 'none';
+                camDot.classList.add('active');
+            })
+            .catch(() => {
+                video.style.display = 'none';
+                placeholder.style.display = 'flex';
+            });
+
+        // Draggable PIP
+        let isDragging = false, offsetX = 0, offsetY = 0;
+        pip.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            offsetX = e.clientX - pip.getBoundingClientRect().left;
+            offsetY = e.clientY - pip.getBoundingClientRect().top;
+            pip.classList.add('dragging');
+            pip.style.transition = 'none';
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const x = Math.max(0, Math.min(window.innerWidth - pip.offsetWidth, e.clientX - offsetX));
+            const y = Math.max(0, Math.min(window.innerHeight - pip.offsetHeight, e.clientY - offsetY));
+            pip.style.left = x + 'px';
+            pip.style.top = y + 'px';
+            pip.style.right = 'auto';
+            pip.style.bottom = 'auto';
+        });
+        document.addEventListener('mouseup', () => {
+            if (isDragging) {
+                isDragging = false;
+                pip.classList.remove('dragging');
+                pip.style.transition = 'box-shadow 0.2s';
+            }
+        });
+    })();
 
     function updateQuestionCount(n) {
         document.getElementById('d-qnum').textContent = n + ' questions';
