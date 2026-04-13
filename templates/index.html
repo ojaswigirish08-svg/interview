@@ -1113,6 +1113,26 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function showHelp(){
   alert('VLSI Interview Agent\n\nSpeak after the question finishes.\n3 seconds of silence auto-submits.\nType in the box if mic is not working.\n"I don\'t know" is scored positively.\nClick "End & Get Report" anytime.');
 }
+
+// Check if redirected from interview with report data
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('show_report') === '1') {
+    try {
+      const reportData = localStorage.getItem('interview_report');
+      if (reportData) {
+        const report = JSON.parse(reportData);
+        renderReport(report);
+        showScreen('report');
+        localStorage.removeItem('interview_report');
+        // Clean URL without reload
+        window.history.replaceState({}, '', '/');
+      }
+    } catch(e) {
+      console.error('Failed to load report from localStorage:', e);
+    }
+  }
+})();
 </script>
 </body>
 </html>

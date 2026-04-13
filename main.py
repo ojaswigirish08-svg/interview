@@ -984,21 +984,49 @@ RETURN ONLY VALID JSON:
   "topic": "specific topic name",
   "difficulty": "{DIFFICULTY_LABELS[session["difficulty_level"]]}",
   "hint_given": {str(force_hint).lower()},
-  "hint_text": "the hint you gave if hint_given is true else null",
-  "evaluation": {{
-    "quality": "strong|adequate|weak|honest_admission|poor_articulation",
-    "accuracy": "correct|partial|wrong|not_applicable",
-    "confidence_level": "high|medium|low",
-    "quadrant": "genuine_expert|genuine_nervous|dangerous_fake|honest_confused",
-    "expected_points": ["point 1", "point 2", "point 3"],
-    "missing_points": ["points the candidate missed"],
-    "score": 5,
-    "score_reasoning": "one sentence",
-    "notes": "specific observation"
-  }}
-}}
-First question: evaluation=null. Warmup: quality="warmup", score=null.
-For expected_points/missing_points: include them whenever accuracy is "partial" or quality is "adequate"."""
+  "hint_text": "the hint you gave if hint_given is true else null"
+}}"""
+
+
+def build_evaluation_prompt(session: dict, question: str, answer: str, difficulty: str, question_type: str) -> str:
+    r = session["resume"]
+    return f"""You are a senior VLSI technical interviewer evaluating a candidate's answer.
+
+CANDIDATE:
+- Domain: {r["domain"].replace("_", " ")}
+- Level: {r["level"].replace("_", " ")} ({r.get("years_experience", 0)} years)
+- Skills: {", ".join(r.get("skills", []))}
+
+QUESTION ({question_type}, {difficulty}): {question}
+ANSWER: {answer}
+
+EVALUATION RULES:
+- INTELLECTUAL HONESTY: "I don't know" = quality "honest_admission", score 6/10, warm response. "I don't know + reasoning" = 8/10.
+- POOR ARTICULATION: correct terms but incomplete = quality "poor_articulation".
+- UNCONVENTIONAL ANSWER: if technically defensible, score defensibility not format. Set accuracy="correct".
+- PARTIAL ANSWER: If question has multiple expected points and candidate answers only some, set accuracy="partial" and list expected_points and missing_points.
+
+RETURN ONLY VALID JSON:
+{{
+  "quality": "strong|adequate|weak|honest_admission|poor_articulation",
+  "accuracy": "correct|partial|wrong|not_applicable",
+  "confidence_level": "high|medium|low",
+  "quadrant": "genuine_expert|genuine_nervous|dangerous_fake|honest_confused",
+  "expected_points": ["point 1", "point 2", "point 3"],
+  "missing_points": ["points the candidate missed"],
+  "score": 5,
+  "score_reasoning": "one sentence",
+  "notes": "specific observation"
+}}"""
+
+
+def evaluate_answer_llm(session: dict, question: str, answer: str, difficulty: str, question_type: str) -> dict:
+    """Evaluate candidate answer using GPT-4o-mini for better quality."""
+    if not answer or question_type == "greeting":
+        return None
+    prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type)
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=500)
+    return result if result else None
 
 def generate_question(session: dict, candidate_answer: str = None) -> dict:
     q_type, extra = decide_question_type(session)
@@ -1081,7 +1109,20 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     messages[0] = {"role": "system", "content": enhanced_prompt}
 
-    result = call_cerebras_json(messages, temperature=0.65, max_tokens=700)
+    # Step 1: Evaluate previous answer with GPT-4o-mini (better quality)
+    evaluation = None
+    if candidate_answer and session.get("history"):
+        last_entry = session["history"][-1]
+        evaluation = evaluate_answer_llm(
+            session,
+            last_entry.get("question", ""),
+            candidate_answer,
+            last_entry.get("difficulty", "basic"),
+            last_entry.get("question_type", "")
+        )
+
+    # Step 2: Generate next question with Cerebras (faster)
+    result = call_cerebras_json(messages, temperature=0.65, max_tokens=400)
 
     if not result or "question" not in result:
         fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
@@ -1089,7 +1130,7 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
             "question": f"Can you explain {fallback_topic} in your own words?",
             "question_type": q_type, "topic": fallback_topic,
             "difficulty": DIFFICULTY_LABELS[session["difficulty_level"]],
-            "hint_given": False, "hint_text": None, "evaluation": None,
+            "hint_given": False, "hint_text": None, "evaluation": evaluation,
             "current_skill": current_skill
         }
 
@@ -1100,6 +1141,7 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     result["question_type"] = q_type
     result["current_skill"] = current_skill
     result["_extra"] = extra  # carry extra data for contradiction tracking
+    result["evaluation"] = evaluation  # attach GPT-4o-mini evaluation
     return result
 
 # ════════════════════════════════════════════════════════════
@@ -1544,7 +1586,7 @@ Return ONLY valid JSON:
   "next_mock_recommendation": "Specific topics, difficulty level, whether lab/hands-on should come first"
 }}"""
 
-    narrative = call_cerebras_json(
+    narrative = call_llm_json(
         [{"role": "user", "content": narrative_prompt}],
         temperature=0.3, max_tokens=2500, retries=2
     )
