@@ -737,7 +737,7 @@ def compute_suspicion_score(session: dict, scored_history: list) -> dict:
         flags.append(f"Confident + wrong pattern at turns {', '.join(str(h['turn']) for h in df_turns[:3])}")
 
     # Signal 12: Answer length spike on hard questions (HIGH)
-    bwc = session.get("behavioral_baseline", {}).get("avg_word_count", 60)
+    bwc = (session.get("behavioral_baseline") or {}).get("avg_word_count", 60)
     spike_turns = [h for h in scored_history
                    if "answer_length_spike_on_hard_question" in h.get("behavioral_flags", [])]
     if spike_turns:
