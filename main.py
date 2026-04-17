@@ -65,7 +65,33 @@ if MISTRAL_API_KEY and os.path.exists(_ref_audio_path):
         MISTRAL_TTS_REF_AUDIO = base64.b64encode(_f.read()).decode()
     print("Mistral Voxtral TTS ready (with reference voice).")
 else:
-    print("Mistral TTS not configured, will use AWS Polly (Amy neural).")
+    print("Mistral TTS not configured.")
+
+# Pocket TTS (local, CPU-only, free, voice cloning)
+pocket_tts_model = None
+pocket_tts_voice_state = None
+try:
+    from pocket_tts import TTSModel, export_model_state
+    import scipy.io.wavfile
+    import numpy as np
+    pocket_tts_model = TTSModel.load_model()
+    # Load cloned voice from exported safetensors (fast) or from reference audio
+    _voice_state_path = os.path.join(os.path.dirname(__file__), "ranjitha_voice.safetensors")
+    if os.path.exists(_voice_state_path):
+        pocket_tts_voice_state = pocket_tts_model.get_state_for_audio_prompt(_voice_state_path)
+        print("Pocket TTS ready (cloned voice from safetensors).")
+    elif os.path.exists(_ref_audio_path):
+        pocket_tts_voice_state = pocket_tts_model.get_state_for_audio_prompt(_ref_audio_path)
+        # Export for fast loading next time
+        export_model_state(pocket_tts_voice_state, _voice_state_path)
+        print("Pocket TTS ready (cloned voice from reference audio, exported safetensors).")
+    else:
+        pocket_tts_voice_state = pocket_tts_model.get_state_for_audio_prompt("alba")
+        print("Pocket TTS ready (default voice: alba).")
+except ImportError:
+    print("Pocket TTS not installed. pip install pocket-tts scipy")
+except Exception as e:
+    print(f"Pocket TTS failed to load: {e}")
 
 print("STT ready. | TTS ready.")
 
@@ -1290,8 +1316,19 @@ def get_trajectory_interpretation(t: str) -> str:
 # ════════════════════════════════════════════════════════════
 # TTS
 # ════════════════════════════════════════════════════════════
+def synthesize_speech_pocket(text: str) -> str:
+    """Primary TTS: Pocket TTS (local, CPU, free, voice cloning)."""
+    audio = pocket_tts_model.generate_audio(pocket_tts_voice_state, text[:1500])
+    # Convert to WAV bytes in memory, then to MP3-compatible base64
+    import io
+    wav_buffer = io.BytesIO()
+    scipy.io.wavfile.write(wav_buffer, pocket_tts_model.sample_rate, audio.numpy())
+    wav_bytes = wav_buffer.getvalue()
+    return base64.b64encode(wav_bytes).decode("utf-8")
+
+
 def synthesize_speech_mistral(text: str) -> str:
-    """Primary TTS: Mistral Voxtral with voice cloning."""
+    """Fallback TTS 1: Mistral Voxtral with voice cloning."""
     resp = http_requests.post(
         "https://api.mistral.ai/v1/audio/speech",
         headers={
@@ -1312,7 +1349,7 @@ def synthesize_speech_mistral(text: str) -> str:
 
 
 def synthesize_speech_polly(text: str) -> str:
-    """Fallback TTS: AWS Polly with Amy neural voice."""
+    """Fallback TTS 2: AWS Polly with Amy neural voice."""
     resp = polly_client.synthesize_speech(
         Text=text[:1500], OutputFormat="mp3",
         VoiceId="Amy", Engine="neural"
@@ -1321,16 +1358,22 @@ def synthesize_speech_polly(text: str) -> str:
 
 
 def synthesize_speech(text: str) -> str:
-    """TTS with fallback: Mistral Voxtral -> AWS Polly (Amy neural)."""
-    # Try Mistral first if configured
+    """TTS with fallback: Pocket TTS -> Mistral Voxtral -> AWS Polly."""
+    # Try Pocket TTS first (local, free)
+    if pocket_tts_model and pocket_tts_voice_state:
+        try:
+            return synthesize_speech_pocket(text)
+        except Exception as e:
+            print(f"Pocket TTS failed, falling back to Mistral: {e}")
+
+    # Fallback 1: Mistral Voxtral
     if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
         try:
-            audio = synthesize_speech_mistral(text)
-            return audio
+            return synthesize_speech_mistral(text)
         except Exception as e:
             print(f"Mistral TTS failed, falling back to Polly: {e}")
 
-    # Fallback: AWS Polly Amy neural
+    # Fallback 2: AWS Polly Amy neural
     try:
         return synthesize_speech_polly(text)
     except Exception as e:
