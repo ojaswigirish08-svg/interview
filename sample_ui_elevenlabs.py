@@ -372,4 +372,4 @@ if __name__ == "__main__":
     print(f"STT: ElevenLabs Scribe v2 Realtime (150ms latency)")
     print(f"Save to: {INTERVIEW_FILE}")
     print(f"\nOpen: http://localhost:5000\n")
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)

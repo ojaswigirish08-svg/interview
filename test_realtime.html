@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head><title>ElevenLabs Realtime STT</title></head>
+<body style="background:#0a0a1a;color:#eee;font-family:'Segoe UI',sans-serif;padding:40px;max-width:800px;margin:auto;">
+
+    <h1 style="color:#a78bfa;text-align:center;">ElevenLabs Realtime Speech-to-Text</h1>
+    <p style="text-align:center;color:#666;">Words appear as you speak — 150ms latency</p>
+
+    <div style="margin:20px 0;text-align:center;">
+        <input id="apiKey" type="password" placeholder="Paste your ElevenLabs API key"
+            style="width:500px;padding:10px;background:#1a1a3e;color:#eee;border:1px solid #7c3aed;border-radius:8px;font-size:14px;">
+    </div>
+
+    <div style="text-align:center;margin:20px 0;">
+        <button id="startBtn" onclick="start()"
+            style="padding:14px 40px;font-size:16px;background:#7c3aed;color:white;border:none;border-radius:10px;cursor:pointer;font-weight:600;">
+            🎙 Start Recording
+        </button>
+        <button id="stopBtn" onclick="stop()" disabled
+            style="padding:14px 40px;font-size:16px;background:#ef4444;color:white;border:none;border-radius:10px;cursor:pointer;font-weight:600;opacity:0.3;">
+            ⏹ Stop
+        </button>
+    </div>
+
+    <div style="background:#1a1a3e;padding:18px;border-radius:12px;margin:15px 0;border-left:4px dashed #7c3aed;min-height:50px;">
+        <p style="font-size:11px;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Live (partial — updates as you speak)</p>
+        <p id="live" style="color:#a78bfa;font-size:18px;">...</p>
+    </div>
+
+    <div style="background:#1a1a3e;padding:18px;border-radius:12px;margin:15px 0;border-left:4px solid #10b981;min-height:50px;">
+        <p style="font-size:11px;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Final (committed after each pause)</p>
+        <p id="final" style="color:#e2e8f0;font-size:18px;line-height:1.6;"></p>
+    </div>
+
+    <p id="status" style="text-align:center;color:#666;margin-top:15px;font-size:14px;">Enter API key and click Start</p>
+
+<script>
+let ws, audioContext, processor, micSource, stream;
+
+async function start() {
+    const key = document.getElementById('apiKey').value.trim();
+    if (!key) { alert('Enter your ElevenLabs API key first'); return; }
+
+    document.getElementById('status').textContent = 'Connecting to ElevenLabs...';
+    document.getElementById('final').textContent = '';
+    document.getElementById('live').textContent = '...';
+
+    // Connect WebSocket with API key as URL param
+    const url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
+        + '?model_id=scribe_v2_realtime'
+        + '&audio_format=pcm_16000'
+        + '&commit_strategy=vad'
+        + '&language_code=en'
+        + '&xi-api-key=' + encodeURIComponent(key);
+
+    ws = new WebSocket(url);
+
+    ws.onopen = () => {
+        document.getElementById('status').textContent = 'Connected! Speak now...';
+        document.getElementById('status').style.color = '#10b981';
+    };
+
+    ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        console.log('[ElevenLabs]', msg.message_type, msg);
+
+        if (msg.message_type === 'partial_transcript' && msg.text) {
+            document.getElementById('live').textContent = msg.text;
+        } else if (msg.message_type === 'committed_transcript' && msg.text) {
+            document.getElementById('final').textContent += msg.text + ' ';
+            document.getElementById('live').textContent = '...';
+        } else if (msg.message_type === 'session_started') {
+            console.log('Session ID:', msg.session_id);
+        }
+    };
+
+    ws.onerror = (e) => {
+        document.getElementById('status').textContent = 'WebSocket ERROR — open F12 Console for details';
+        document.getElementById('status').style.color = '#ef4444';
+        console.error('WebSocket Error:', e);
+    };
+
+    ws.onclose = (e) => {
+        document.getElementById('status').textContent = 'Connection closed: ' + e.code + ' — ' + (e.reason || 'unknown reason');
+        document.getElementById('status').style.color = '#ef4444';
+        console.log('WebSocket Closed:', e.code, e.reason);
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('stopBtn').disabled = true;
+        document.getElementById('stopBtn').style.opacity = '0.3';
+    };
+
+    // Get microphone
+    try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+        document.getElementById('status').textContent = 'Microphone access denied!';
+        document.getElementById('status').style.color = '#ef4444';
+        return;
+    }
+
+    // Create audio processor at 16kHz
+    audioContext = new AudioContext({ sampleRate: 16000 });
+    micSource = audioContext.createMediaStreamSource(stream);
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = (e) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            const float32 = e.inputBuffer.getChannelData(0);
+            const int16 = new Int16Array(float32.length);
+            for (let i = 0; i < float32.length; i++) {
+                int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+            }
+            const bytes = new Uint8Array(int16.buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+
+            ws.send(JSON.stringify({
+                message_type: 'input_audio_chunk',
+                audio_base_64: btoa(binary),
+                sample_rate: 16000
+            }));
+        }
+    };
+
+    micSource.connect(processor);
+    processor.connect(audioContext.destination);
+
+    document.getElementById('startBtn').disabled = true;
+    document.getElementById('stopBtn').disabled = false;
+    document.getElementById('stopBtn').style.opacity = '1';
+}
+
+function stop() {
+    if (processor) processor.disconnect();
+    if (micSource) micSource.disconnect();
+    if (audioContext) audioContext.close();
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    if (ws) ws.close();
+
+    document.getElementById('startBtn').disabled = false;
+    document.getElementById('stopBtn').disabled = true;
+    document.getElementById('stopBtn').style.opacity = '0.3';
+    document.getElementById('status').textContent = 'Stopped.';
+    document.getElementById('status').style.color = '#666';
+    document.getElementById('live').textContent = '(stopped)';
+}
+</script>
+</body>
+</html>
