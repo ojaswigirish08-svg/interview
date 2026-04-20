@@ -40,11 +40,10 @@ let ws, audioContext, micSource, stream;
 
 async function getToken(apiKey) {
     // Step 1: Get a single-use token from ElevenLabs API
-    const resp = await fetch('https://api.elevenlabs.io/v1/speech-to-text/get-token', {
+    const resp = await fetch('https://api.elevenlabs.io/v1/single-use-token/realtime_scribe', {
         method: 'POST',
         headers: {
-            'xi-api-key': apiKey,
-            'Content-Type': 'application/json'
+            'xi-api-key': apiKey
         }
     });
     if (!resp.ok) {
