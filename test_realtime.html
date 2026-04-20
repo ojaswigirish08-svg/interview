@@ -4,7 +4,7 @@
 <body style="background:#0a0a1a;color:#eee;font-family:'Segoe UI',sans-serif;padding:40px;max-width:800px;margin:auto;">
 
     <h1 style="color:#a78bfa;text-align:center;">ElevenLabs Realtime Speech-to-Text</h1>
-    <p style="text-align:center;color:#666;">Words appear as you speak — 150ms latency</p>
+    <p style="text-align:center;color:#666;">Words appear as you speak</p>
 
     <div style="margin:20px 0;text-align:center;">
         <input id="apiKey" type="password" placeholder="Paste your ElevenLabs API key"
@@ -23,12 +23,12 @@
     </div>
 
     <div style="background:#1a1a3e;padding:18px;border-radius:12px;margin:15px 0;border-left:4px dashed #7c3aed;min-height:50px;">
-        <p style="font-size:11px;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Live (partial — updates as you speak)</p>
+        <p style="font-size:11px;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Live (partial)</p>
         <p id="live" style="color:#a78bfa;font-size:18px;">...</p>
     </div>
 
     <div style="background:#1a1a3e;padding:18px;border-radius:12px;margin:15px 0;border-left:4px solid #10b981;min-height:50px;">
-        <p style="font-size:11px;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Final (committed after each pause)</p>
+        <p style="font-size:11px;color:#10b981;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Final</p>
         <p id="final" style="color:#e2e8f0;font-size:18px;line-height:1.6;"></p>
     </div>
 
@@ -36,44 +36,59 @@
     <p id="debug" style="text-align:center;color:#444;font-size:12px;"></p>
 
 <script>
-let ws, audioContext, processor, micSource, stream;
+let ws, audioContext, workletNode, micSource, stream;
+const TARGET_SR = 16000;
 
 async function start() {
     const key = document.getElementById('apiKey').value.trim();
     if (!key) { alert('Enter your ElevenLabs API key first'); return; }
 
-    document.getElementById('status').textContent = 'Connecting...';
+    document.getElementById('status').textContent = 'Getting microphone...';
     document.getElementById('status').style.color = '#a78bfa';
     document.getElementById('final').textContent = '';
     document.getElementById('live').textContent = '...';
 
-    // Step 1: Get microphone FIRST to know real sample rate
+    // Step 1: Get microphone
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream = await navigator.mediaDevices.getUserMedia({
+            audio: { sampleRate: TARGET_SR, channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
     } catch(e) {
-        document.getElementById('status').textContent = 'Microphone denied! Allow mic access.';
+        document.getElementById('status').textContent = 'Microphone denied!';
         document.getElementById('status').style.color = '#ef4444';
         return;
     }
 
-    // Step 2: Create AudioContext with native sample rate
-    audioContext = new AudioContext();
-    const nativeSR = audioContext.sampleRate;
-    document.getElementById('debug').textContent = 'Browser sample rate: ' + nativeSR + 'Hz';
+    // Step 2: Create AudioContext — force 16kHz if possible
+    try {
+        audioContext = new AudioContext({ sampleRate: TARGET_SR });
+    } catch(e) {
+        audioContext = new AudioContext();
+    }
+    const actualSR = audioContext.sampleRate;
+    document.getElementById('debug').textContent = 'Sample rate: ' + actualSR + 'Hz | Target: ' + TARGET_SR + 'Hz';
 
-    // Step 3: Connect WebSocket with correct sample rate
+    // Step 3: Connect WebSocket
+    document.getElementById('status').textContent = 'Connecting to ElevenLabs...';
+
     const url = 'wss://api.elevenlabs.io/v1/speech-to-text/realtime'
         + '?model_id=scribe_v2_realtime'
-        + '&audio_format=pcm_' + nativeSR
+        + '&audio_format=pcm_' + actualSR
         + '&commit_strategy=vad'
-        + '&language_code=en'
-        + '&xi-api-key=' + encodeURIComponent(key);
+        + '&language_code=en';
 
+    // Try WebSocket with subprotocol for auth
     ws = new WebSocket(url);
 
+    // Send auth message on open
     ws.onopen = () => {
-        document.getElementById('status').textContent = 'Connected! Speak now...';
-        document.getElementById('status').style.color = '#10b981';
+        document.getElementById('status').textContent = 'Connected! Sending auth...';
+
+        // Send auth as first message
+        ws.send(JSON.stringify({
+            message_type: 'authentication',
+            xi_api_key: key
+        }));
     };
 
     ws.onmessage = (e) => {
@@ -81,13 +96,19 @@ async function start() {
         const type = msg.message_type || '';
         console.log('[EL]', type, msg);
 
-        if (type === 'partial_transcript' && msg.text) {
+        if (type === 'session_started') {
+            document.getElementById('status').textContent = 'Authenticated! Speak now...';
+            document.getElementById('status').style.color = '#10b981';
+            document.getElementById('debug').textContent += ' | Session: ' + (msg.session_id || 'ok');
+            startSendingAudio();
+        } else if (type === 'partial_transcript' && msg.text) {
             document.getElementById('live').textContent = msg.text;
         } else if (type === 'committed_transcript' && msg.text) {
             document.getElementById('final').textContent += msg.text + ' ';
             document.getElementById('live').textContent = '...';
-        } else if (type === 'session_started') {
-            document.getElementById('debug').textContent += ' | Session: ' + msg.session_id;
+        } else if (type === 'auth_error' || type === 'error') {
+            document.getElementById('status').textContent = 'Auth error: ' + (msg.error || JSON.stringify(msg));
+            document.getElementById('status').style.color = '#ef4444';
         }
     };
 
@@ -104,39 +125,49 @@ async function start() {
         resetButtons();
     };
 
-    // Step 4: Process mic audio and send as PCM chunks
-    micSource = audioContext.createMediaStreamSource(stream);
-    processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-    processor.onaudioprocess = (e) => {
-        if (ws && ws.readyState === WebSocket.OPEN) {
-            const float32 = e.inputBuffer.getChannelData(0);
-            const int16 = new Int16Array(float32.length);
-            for (let i = 0; i < float32.length; i++) {
-                int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
-            }
-            const bytes = new Uint8Array(int16.buffer);
-            let binary = '';
-            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-
-            ws.send(JSON.stringify({
-                message_type: 'input_audio_chunk',
-                audio_base_64: btoa(binary),
-                sample_rate: nativeSR
-            }));
-        }
-    };
-
-    micSource.connect(processor);
-    processor.connect(audioContext.destination);
-
     document.getElementById('startBtn').disabled = true;
     document.getElementById('stopBtn').disabled = false;
     document.getElementById('stopBtn').style.opacity = '1';
 }
 
+function startSendingAudio() {
+    const actualSR = audioContext.sampleRate;
+    micSource = audioContext.createMediaStreamSource(stream);
+    const processor = audioContext.createScriptProcessor(4096, 1, 1);
+    window._processor = processor;
+
+    processor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        let float32 = e.inputBuffer.getChannelData(0);
+
+        // Resample if needed (browser gives 48000, ElevenLabs needs matching rate)
+        const int16 = new Int16Array(float32.length);
+        for (let i = 0; i < float32.length; i++) {
+            int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+        }
+
+        // Convert to base64
+        const bytes = new Uint8Array(int16.buffer);
+        const chunkSize = 8192;
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+
+        ws.send(JSON.stringify({
+            message_type: 'input_audio_chunk',
+            audio_base_64: btoa(binary),
+            sample_rate: actualSR
+        }));
+    };
+
+    micSource.connect(processor);
+    processor.connect(audioContext.destination);
+}
+
 function stop() {
-    if (processor) processor.disconnect();
+    if (window._processor) window._processor.disconnect();
     if (micSource) micSource.disconnect();
     if (audioContext) audioContext.close();
     if (stream) stream.getTracks().forEach(t => t.stop());
