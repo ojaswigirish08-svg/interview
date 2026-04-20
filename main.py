@@ -6,7 +6,7 @@ VLSI Interview Agent — Mock Interview Mode
 import os, re, json, time, uuid, base64, tempfile, statistics, hashlib
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -1426,6 +1426,72 @@ def synthesize_speech(text: str) -> str:
         print(f"Polly TTS also failed: {e}")
         return ""
 
+
+def stream_tts_polly(text: str):
+    """Streaming TTS via AWS Polly — yields audio chunks."""
+    try:
+        resp = polly_client.synthesize_speech(
+            Text=text[:1500], OutputFormat="mp3",
+            VoiceId="Amy", Engine="neural"
+        )
+        stream = resp["AudioStream"]
+        while True:
+            chunk = stream.read(4096)
+            if not chunk:
+                break
+            yield chunk
+    except Exception as e:
+        print(f"Polly streaming failed: {e}")
+
+
+def stream_tts_mistral(text: str):
+    """Streaming TTS via Mistral Voxtral — yields audio chunks."""
+    try:
+        resp = http_requests.post(
+            "https://api.mistral.ai/v1/audio/speech",
+            headers={
+                "Authorization": f"Bearer {MISTRAL_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": "voxtral-mini-tts-2603",
+                "input": text[:1500],
+                "ref_audio": MISTRAL_TTS_REF_AUDIO,
+                "response_format": "mp3",
+            },
+            timeout=15,
+            stream=True,
+        )
+        resp.raise_for_status()
+        for chunk in resp.iter_content(chunk_size=4096):
+            if chunk:
+                yield chunk
+    except Exception as e:
+        print(f"Mistral streaming failed: {e}")
+
+
+def stream_tts(text: str):
+    """Streaming TTS with fallback: Mistral -> Polly. (Pocket TTS doesn't support streaming)"""
+    # Mistral Voxtral (streaming + voice cloning)
+    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
+        try:
+            has_data = False
+            for chunk in stream_tts_mistral(text):
+                has_data = True
+                yield chunk
+            if has_data:
+                return
+        except Exception as e:
+            print(f"Mistral stream failed, falling back to Polly: {e}")
+
+    # AWS Polly (streaming)
+    try:
+        for chunk in stream_tts_polly(text):
+            yield chunk
+    except Exception as e:
+        print(f"Polly stream also failed: {e}")
+
+
 # ════════════════════════════════════════════════════════════
 # STT — OpenAI Whisper API
 # ════════════════════════════════════════════════════════════
@@ -2104,6 +2170,34 @@ async def submit_answer(data: AnswerSubmit):
         "warmup_decision": result.get("warmup_decision"),
         "warmup_performance": session.get("warmup_performance", "pending")
     })
+
+@app.get("/api/stream-tts")
+async def stream_tts_endpoint(text: str, session_id: str = ""):
+    """Streaming TTS endpoint — returns audio chunks as they're generated."""
+    session = sessions.get(session_id) if session_id else None
+    if not text:
+        raise HTTPException(400, "No text provided")
+
+    # Use Pocket TTS if available (non-streaming, but return as single response)
+    if pocket_tts_model and pocket_tts_voice_state:
+        try:
+            audio_b64 = synthesize_speech_pocket(text)
+            audio_bytes = base64.b64decode(audio_b64)
+            return StreamingResponse(
+                iter([audio_bytes]),
+                media_type="audio/wav",
+                headers={"Content-Length": str(len(audio_bytes))}
+            )
+        except Exception as e:
+            print(f"Pocket TTS failed in stream endpoint, using streaming fallback: {e}")
+
+    # Streaming fallback (Mistral -> Polly)
+    return StreamingResponse(
+        stream_tts(text),
+        media_type="audio/mpeg",
+        headers={"Transfer-Encoding": "chunked"}
+    )
+
 
 @app.post("/api/transcribe")
 async def transcribe_endpoint(audio: UploadFile = File(...), session_id: str = Form(...)):

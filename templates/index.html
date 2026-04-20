@@ -698,12 +698,27 @@ function detectAudioType(bytes) {
 async function speak(text, b64) {
   setStatus('Speaking...'); setState('speaking');
   if(b64) {
+    // Use base64 audio from submit-answer response (backward compatible)
     const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
     const blob=new Blob([bytes],{type:detectAudioType(bytes)});
     const url=URL.createObjectURL(blob);
     const audio=new Audio(url);
     await new Promise(res=>{audio.onended=res;audio.onerror=res;audio.play().catch(res);});
     URL.revokeObjectURL(url);
+  } else if(text) {
+    // Streaming TTS — fetch audio as stream, play immediately
+    try {
+      const sid=S.sessionId||'';
+      const url=`/api/stream-tts?text=${encodeURIComponent(text)}&session_id=${sid}`;
+      const audio=new Audio(url);
+      await new Promise(res=>{audio.onended=res;audio.onerror=res;audio.play().catch(res);});
+    } catch(e) {
+      console.warn('Streaming TTS failed, using browser TTS:', e);
+      if('speechSynthesis' in window) {
+        const utt=new SpeechSynthesisUtterance(text); utt.rate=0.93;
+        await new Promise(res=>{utt.onend=res;utt.onerror=res;speechSynthesis.speak(utt);});
+      } else { await sleep(2500); }
+    }
   } else if('speechSynthesis' in window) {
     const utt=new SpeechSynthesisUtterance(text); utt.rate=0.93;
     await new Promise(res=>{utt.onend=res;utt.onerror=res;speechSynthesis.speak(utt);});
