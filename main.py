@@ -46,15 +46,15 @@ if CEREBRAS_API_KEY:
     )
     print("Cerebras LLM ready (for resume parsing).")
 
-# Groq Whisper (primary STT)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-groq_client = None
-if GROQ_API_KEY:
-    from groq import Groq
-    groq_client = Groq(api_key=GROQ_API_KEY)
-    print("Groq Whisper ready (primary STT).")
+# ElevenLabs (fallback STT)
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+elevenlabs_client = None
+if ELEVENLABS_API_KEY:
+    from elevenlabs.client import ElevenLabs
+    elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    print("ElevenLabs Scribe v2 ready (fallback STT).")
 else:
-    print("Groq not configured, will use OpenAI Whisper.")
+    print("ElevenLabs not configured.")
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
@@ -93,7 +93,8 @@ except ImportError:
 except Exception as e:
     print(f"Pocket TTS failed to load: {e}")
 
-print("STT ready. | TTS ready.")
+print("STT: gpt-4o-mini-transcribe -> ElevenLabs Scribe v2")
+print("TTS: Pocket TTS -> Mistral Voxtral")
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -1404,27 +1405,22 @@ def synthesize_speech_polly(text: str) -> str:
 
 
 def synthesize_speech(text: str) -> str:
-    """TTS with fallback: Pocket TTS -> Mistral Voxtral -> AWS Polly."""
-    # Try Pocket TTS first (local, free)
+    """TTS with fallback: Pocket TTS -> Mistral Voxtral."""
+    # Primary: Pocket TTS (local, free, voice cloning)
     if pocket_tts_model and pocket_tts_voice_state:
         try:
             return synthesize_speech_pocket(text)
         except Exception as e:
             print(f"Pocket TTS failed, falling back to Mistral: {e}")
 
-    # Fallback 1: Mistral Voxtral
+    # Fallback: Mistral Voxtral (voice cloning)
     if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
         try:
             return synthesize_speech_mistral(text)
         except Exception as e:
-            print(f"Mistral TTS failed, falling back to Polly: {e}")
+            print(f"Mistral TTS also failed: {e}")
 
-    # Fallback 2: AWS Polly Amy neural
-    try:
-        return synthesize_speech_polly(text)
-    except Exception as e:
-        print(f"Polly TTS also failed: {e}")
-        return ""
+    return ""
 
 
 def stream_tts_polly(text: str):
@@ -1471,32 +1467,21 @@ def stream_tts_mistral(text: str):
 
 
 def stream_tts(text: str):
-    """Streaming TTS with fallback: Mistral -> Polly. (Pocket TTS doesn't support streaming)"""
+    """Streaming TTS: Mistral Voxtral. (Pocket TTS doesn't support streaming)"""
     # Mistral Voxtral (streaming + voice cloning)
     if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
         try:
-            has_data = False
             for chunk in stream_tts_mistral(text):
-                has_data = True
                 yield chunk
-            if has_data:
-                return
         except Exception as e:
-            print(f"Mistral stream failed, falling back to Polly: {e}")
-
-    # AWS Polly (streaming)
-    try:
-        for chunk in stream_tts_polly(text):
-            yield chunk
-    except Exception as e:
-        print(f"Polly stream also failed: {e}")
+            print(f"Mistral stream failed: {e}")
 
 
 # ════════════════════════════════════════════════════════════
 # STT — OpenAI Whisper API
 # ════════════════════════════════════════════════════════════
 def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
-    """Transcribe: Groq Whisper (fast) -> OpenAI Whisper (fallback)."""
+    """Transcribe: gpt-4o-mini-transcribe (primary) -> ElevenLabs Scribe v2 (fallback)."""
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False) as f:
@@ -1507,38 +1492,34 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
         avg_confidence = 1.0
         source = ""
 
-        # Primary: Groq Whisper
-        if groq_client:
-            try:
-                with open(tmp_path, "rb") as audio_file:
-                    response = groq_client.audio.transcriptions.create(
-                        model="whisper-large-v3-turbo",
-                        file=audio_file,
-                        language="en",
-                    )
-                transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
-                source = "Groq"
-            except Exception as e:
-                print(f"Groq Whisper failed, falling back to OpenAI: {e}")
-
-        # Fallback: OpenAI Whisper
-        if not transcript and not source:
+        # Primary: OpenAI gpt-4o-mini-transcribe (accurate + fast)
+        try:
             with open(tmp_path, "rb") as audio_file:
                 response = openai_client.audio.transcriptions.create(
-                    model="whisper-1",
+                    model="gpt-4o-mini-transcribe",
                     file=audio_file,
                     language="en",
-                    response_format="verbose_json"
                 )
             transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
-            source = "OpenAI"
+            source = "gpt-4o-mini-transcribe"
+        except Exception as e:
+            print(f"gpt-4o-mini-transcribe failed, falling back to ElevenLabs: {e}")
 
-            if hasattr(response, 'segments') and response.segments:
-                confidences = [seg.get('avg_logprob', 0) for seg in response.segments if isinstance(seg, dict)]
-                if confidences:
-                    avg_confidence = min(1.0, max(0.0, 1.0 + sum(confidences) / len(confidences) / 2))
+        # Fallback: ElevenLabs Scribe v2 (most accurate)
+        if not transcript and elevenlabs_client:
+            try:
+                with open(tmp_path, "rb") as audio_file:
+                    response = elevenlabs_client.speech_to_text.convert(
+                        file=audio_file,
+                        model_id="scribe_v2",
+                        language_code="eng",
+                    )
+                transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                source = "ElevenLabs Scribe v2"
+            except Exception as e:
+                print(f"ElevenLabs Scribe v2 also failed: {e}")
 
-        print(f"{source} Whisper: '{transcript[:80]}' | confidence: {avg_confidence:.2f}")
+        print(f"STT [{source}]: '{transcript[:80]}' | confidence: {avg_confidence:.2f}")
 
         return {
             "transcript": transcript,
@@ -1548,7 +1529,7 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
             "needs_repeat": len(transcript.strip()) == 0
         }
     except Exception as e:
-        print(f"Whisper error: {e}")
+        print(f"STT error: {e}")
         return {"transcript": "", "avg_confidence": 0.0, "low_confidence": True,
                 "corrupted_terms": [], "needs_repeat": False}
     finally:
