@@ -581,7 +581,7 @@
         document.getElementById('main-btn').style.borderColor = '#4a4';
         document.getElementById('main-btn').style.color = '#fff';
         document.getElementById('main-label').textContent = 'Interview Complete';
-        document.getElementById('sub-label').textContent = `${qCount} questions answered`;
+        document.getElementById('sub-label').textContent = `${techQuestionCount} technical questions answered`;
         document.getElementById('question-text').textContent = 'Thank you for completing the interview. Click "View Report" to see your results.';
         document.getElementById('footer-tag').textContent = 'completed';
     }
@@ -759,13 +759,27 @@
         }
     }
 
+    let warmupTurns = 0;
+    let techQuestionCount = 0;
+
     function displayQuestion(data) {
         if (interviewEnded) return;
 
         document.getElementById('question-text').textContent = data.question;
-        updateQuestionCount(data.turn || qCount + 1);
 
         const phase = data.phase || 'interview';
+
+        // Only count technical questions, not warmup/greeting
+        if (phase === 'interview') {
+            if (!warmupTurns) warmupTurns = (data.turn || 1) - 1;
+            techQuestionCount = Math.max(0, (data.turn || 0) - warmupTurns);
+            updateQuestionCount(techQuestionCount);
+        } else {
+            document.getElementById('d-qnum').textContent = 'Warmup';
+            document.getElementById('q-num-label').textContent = 'Warmup';
+            document.getElementById('stat-q').textContent = '0';
+        }
+
         document.getElementById('live-badge').textContent = (phase === 'warmup' || phase === 'greeting') ? 'warmup' : 'live';
         document.getElementById('live-badge').classList.add('active');
 
