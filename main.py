@@ -37,14 +37,14 @@ polly_client = boto3.client(
 )
 
 # AWS Bedrock — Claude Sonnet 4.6 (for question generation + evaluation)
-BEDROCK_REGION = os.getenv("AWS_BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
+BEDROCK_REGION = os.getenv("AWS_BEDROCK_REGION", os.getenv("AWS_REGION", "ap-south-1"))
 bedrock_client = boto3.client(
     "bedrock-runtime",
     region_name=BEDROCK_REGION,
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
-CLAUDE_MODEL_ID = os.getenv("CLAUDE_MODEL_ID", "us.anthropic.claude-sonnet-4-6-20250514-v1:0")
+CLAUDE_MODEL_ID = os.getenv("CLAUDE_MODEL_ID", "anthropic.claude-sonnet-4-6")
 print(f"AWS Bedrock Claude ready (model: {CLAUDE_MODEL_ID}, region: {BEDROCK_REGION})")
 
 # Cerebras (fast LLM for resume parsing)
