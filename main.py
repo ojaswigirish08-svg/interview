@@ -1498,6 +1498,7 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
         source = ""
 
         # Primary: OpenAI gpt-4o-mini-transcribe (accurate + fast)
+        t_stt_start = time.time()
         try:
             with open(tmp_path, "rb") as audio_file:
                 response = openai_client.audio.transcriptions.create(
@@ -1506,12 +1507,19 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
                     language="en",
                 )
             transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
-            source = "gpt-4o-mini-transcribe"
+            t_stt_primary = time.time() - t_stt_start
+            if transcript:
+                source = "gpt-4o-mini-transcribe"
+                print(f"[Timing] STT (gpt-4o-mini-transcribe): {t_stt_primary:.2f}s | '{transcript[:60]}'")
+            else:
+                print(f"[Timing] STT (gpt-4o-mini-transcribe): {t_stt_primary:.2f}s | EMPTY — no speech detected, trying ElevenLabs")
         except Exception as e:
-            print(f"gpt-4o-mini-transcribe failed, falling back to ElevenLabs: {e}")
+            t_stt_primary = time.time() - t_stt_start
+            print(f"[Timing] STT (gpt-4o-mini-transcribe): {t_stt_primary:.2f}s | FAILED: {e}")
 
         # Fallback: ElevenLabs Scribe v2 (most accurate)
         if not transcript and elevenlabs_client:
+            t_stt_fallback = time.time()
             try:
                 with open(tmp_path, "rb") as audio_file:
                     response = elevenlabs_client.speech_to_text.convert(
@@ -1520,11 +1528,15 @@ def transcribe_audio(audio_bytes: bytes, ext: str = "webm") -> dict:
                         language_code="eng",
                     )
                 transcript = response.text.strip() if hasattr(response, 'text') else str(response).strip()
+                t_stt_fb_elapsed = time.time() - t_stt_fallback
                 source = "ElevenLabs Scribe v2"
+                print(f"[Timing] STT (ElevenLabs fallback): {t_stt_fb_elapsed:.2f}s | '{transcript[:60]}'")
             except Exception as e:
-                print(f"ElevenLabs Scribe v2 also failed: {e}")
+                t_stt_fb_elapsed = time.time() - t_stt_fallback
+                print(f"[Timing] STT (ElevenLabs fallback): {t_stt_fb_elapsed:.2f}s | FAILED: {e}")
 
-        print(f"STT [{source}]: '{transcript[:80]}' | confidence: {avg_confidence:.2f}")
+        t_stt_total = time.time() - t_stt_start
+        print(f"STT [{source}]: '{transcript[:80]}' | confidence: {avg_confidence:.2f} | total: {t_stt_total:.2f}s")
 
         return {
             "transcript": transcript,
