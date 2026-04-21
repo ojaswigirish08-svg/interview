@@ -14,18 +14,33 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "YOUR_GROQ_API_KEY_HERE")
 groq_client = Groq(api_key=GROQ_API_KEY)
 INTERVIEW_FILE = "interview_data_groq.json"
 
-# Sample VLSI interview questions
+# Design Verification interview questions
 QUESTIONS = [
-    "Tell me about yourself and your experience in VLSI.",
-    "What is the difference between setup time and hold time?",
-    "What happens when setup time is violated?",
-    "Explain clock tree synthesis and why it is important.",
-    "What is metastability and how do you handle it?",
-    "What is the difference between blocking and non-blocking assignments in Verilog?",
-    "Explain IR drop and how it affects timing closure.",
-    "What is OCV and how do you handle it in STA?",
-    "What are the challenges in multi-voltage design?",
-    "How do you debug a timing violation that only appears in silicon?",
+    "Tell me about yourself and your experience in Design Verification.",
+    "Explain the UVM testbench architecture. What are the key components and how do they interact?",
+    "What is the difference between uvm_sequence, uvm_sequence_item, and uvm_driver? How do they work together?",
+    "What are UVM phases? Explain the build, connect, run, and report phases.",
+    "What is the difference between immediate assertions and concurrent assertions in SystemVerilog?",
+    "Write an SVA property to check that after a request signal goes high, grant must come within 5 clock cycles.",
+    "What is the difference between $rose, $fell, and $stable in SVA? Give a real use case for each.",
+    "What is the difference between code coverage and functional coverage? Why do you need both?",
+    "You have 95% code coverage but only 60% functional coverage. What does that tell you and how do you fix it?",
+    "How do you write a covergroup with cross coverage? Give an example with two variables.",
+    "What is constrained random verification? Why is it better than directed testing?",
+    "How do you use constraints in SystemVerilog? What is the difference between soft and hard constraints?",
+    "What happens when two constraints conflict? How do you debug constraint solver failures?",
+    "Your simulation passes but the checker is not firing. How do you debug this?",
+    "What is a scoreboard in UVM? How do you handle out-of-order transactions?",
+    "Explain the difference between factory override and type override in UVM. When would you use each?",
+    "What is a virtual sequence and when do you use it? How is it different from a regular sequence?",
+    "How do you verify a multi-clock domain design? What are the challenges?",
+    "What is formal verification? When would you use it instead of simulation-based verification?",
+    "Explain the difference between simulation, emulation, and FPGA prototyping. When do you use each?",
+    "A bug was found in silicon that was not caught in verification. How do you root-cause this and prevent it in the future?",
+    "What is register verification using RAL in UVM? How do you verify CSR access?",
+    "How do you handle verification of low-power designs with UPF/CPF?",
+    "What is the difference between pass-by-reference and pass-by-value in SystemVerilog tasks and functions?",
+    "What verification closure criteria do you follow before tapeout? How do you know verification is complete?",
 ]
 
 HTML_TEMPLATE = """
@@ -69,8 +84,8 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>VLSI Mock Interview</h1>
-        <div class="badge"><span>Groq Whisper — FREE STT</span></div>
+        <h1>Design Verification Interview</h1>
+        <div class="badge"><span>Groq Whisper — DV / UVM / SVA</span></div>
         <div class="progress" id="progress">Question 1 of {{ total }}</div>
 
         <div class="model-select">
