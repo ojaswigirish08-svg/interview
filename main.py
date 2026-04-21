@@ -1290,10 +1290,11 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     messages[0] = {"role": "system", "content": enhanced_prompt}
 
-    # Step 1: Evaluate previous answer with GPT-4o-mini (better quality)
+    # Step 1: Evaluate previous answer with Claude Sonnet 4.6
     evaluation = None
     if candidate_answer and session.get("history"):
         last_entry = session["history"][-1]
+        t_eval_start = time.time()
         evaluation = evaluate_answer_llm(
             session,
             last_entry.get("question", ""),
@@ -1301,9 +1302,14 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
             last_entry.get("difficulty", "basic"),
             last_entry.get("question_type", "")
         )
+        t_eval = time.time() - t_eval_start
+        print(f"[Timing] Evaluation: {t_eval:.2f}s | Score: {(evaluation or {}).get('score', '?')} | Quality: {(evaluation or {}).get('quality', '?')}")
 
     # Step 2: Generate next question with Claude Sonnet 4.6 via Bedrock (prompt cached)
+    t_qgen_start = time.time()
     result = call_claude_json(messages, temperature=0.65, max_tokens=400)
+    t_qgen = time.time() - t_qgen_start
+    print(f"[Timing] Question gen: {t_qgen:.2f}s | Type: {q_type} | Skill: {current_skill} | Q: {(result or {}).get('question', 'FALLBACK')[:80]}")
 
     if not result or "question" not in result:
         fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
@@ -2000,13 +2006,21 @@ async def start_interview(data: dict):
         print("[Interview] Using cached greeting - instant start!")
     elif session["phase"] == "greeting":
         result = generate_greeting(session)
+        t_tts = time.time()
         audio = synthesize_speech(result["question"])
+        print(f"[Timing] TTS (greeting): {time.time()-t_tts:.2f}s | {len(result['question'])} chars")
     elif session["phase"] == "warmup":
+        t_wq = time.time()
         result = generate_warmup_question(session)
+        print(f"[Timing] Warmup question gen: {time.time()-t_wq:.2f}s")
+        t_tts = time.time()
         audio = synthesize_speech(result["question"])
+        print(f"[Timing] TTS (warmup): {time.time()-t_tts:.2f}s | {len(result['question'])} chars")
     else:
         result = generate_question(session)
+        t_tts = time.time()
         audio = synthesize_speech(result["question"])
+        print(f"[Timing] TTS (start): {time.time()-t_tts:.2f}s | {len(result['question'])} chars")
 
     session["warmup_conversation"].append(f"Interviewer: {result['question']}")
 
@@ -2259,7 +2273,10 @@ async def submit_answer(data: AnswerSubmit):
         result.get("warmup_decision") == "end_not_ready"
     )
 
+    t_tts = time.time()
     audio = synthesize_speech(result["question"])
+    t_tts_elapsed = time.time() - t_tts
+    print(f"[Timing] TTS: {t_tts_elapsed:.2f}s | {len(result['question'])} chars | Turn {session['turn']}")
     return JSONResponse({
         "question": result["question"], "question_type": result.get("question_type", "interview"),
         "turn": session["turn"], "phase": session["phase"], "audio": audio,
