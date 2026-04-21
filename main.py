@@ -1072,7 +1072,7 @@ def build_system_prompt(session: dict, forced_type: str, extra: dict = None) -> 
     if session.get("history") and session["history"][-1].get("answer"):
         last_a = session["history"][-1]
         last_answer_summary = f"- Last answer quality: {last_eval_quality} | Confidence: {last_confidence}"
-        if last_a.get("evaluation", {}).get("notes"):
+        if (last_a.get("evaluation") or {}).get("notes"):
             last_answer_summary += f"\n- Evaluator note: {last_a['evaluation']['notes']}"
 
     # Level-calibrated complexity guide
