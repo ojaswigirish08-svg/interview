@@ -36,16 +36,6 @@ polly_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
-# AWS Bedrock — Claude Sonnet 4.6 (for question generation + evaluation)
-BEDROCK_REGION = os.getenv("AWS_BEDROCK_REGION", os.getenv("AWS_REGION", "ap-south-1"))
-bedrock_client = boto3.client(
-    "bedrock-runtime",
-    region_name=BEDROCK_REGION,
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-)
-CLAUDE_MODEL_ID = os.getenv("CLAUDE_MODEL_ID", "anthropic.claude-sonnet-4-6")
-print(f"AWS Bedrock Claude ready (model: {CLAUDE_MODEL_ID}, region: {BEDROCK_REGION})")
 
 # Cerebras (fast LLM for resume parsing)
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
@@ -105,9 +95,8 @@ except Exception as e:
     print(f"Pocket TTS failed to load: {e}")
 
 print("STT: gpt-4o-mini-transcribe -> ElevenLabs Scribe v2")
-print("TTS: Pocket TTS -> Mistral Voxtral")
-print(f"LLM (questions+eval): Claude Sonnet 4.6 via Bedrock (prompt cached) | Fallback: GPT-4o-mini")
-print(f"LLM (resume+warmup): Cerebras Llama 3.1-8b | LLM (report): GPT-4o-mini")
+print("TTS: Mistral Voxtral -> Pocket TTS")
+print("LLM (questions+eval+report): GPT-4o-mini | LLM (resume+warmup): Cerebras Llama 3.1-8b")
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -330,104 +319,6 @@ def call_llm_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -
             print(f"LLM attempt {attempt+1} failed: {e}")
             if attempt == retries:
                 raise
-    return {}
-
-# ════════════════════════════════════════════════════════════
-# CLAUDE VIA AWS BEDROCK — with prompt caching
-# ════════════════════════════════════════════════════════════
-def call_claude(messages: list, temperature=0.5, max_tokens=1000) -> str:
-    """Call Claude Sonnet 4.6 via AWS Bedrock with prompt caching.
-
-    Prompt caching: The system prompt is marked with cache_control so Bedrock
-    caches it across calls within the same session. The system prompt (~1000 tokens)
-    stays cached for 5 minutes, saving latency and cost on subsequent questions.
-
-    Falls back to GPT-4o-mini if Bedrock fails.
-    """
-    try:
-        # Separate system message from conversation
-        system_content = []
-        converse_messages = []
-
-        for msg in messages:
-            if msg["role"] == "system":
-                # Mark system prompt for caching (Bedrock prompt caching)
-                system_content.append({
-                    "text": msg["content"]
-                })
-            else:
-                converse_messages.append({
-                    "role": msg["role"],
-                    "content": [{"text": msg["content"]}]
-                })
-
-        # Ensure messages alternate user/assistant — Bedrock requires this
-        if not converse_messages:
-            converse_messages = [{"role": "user", "content": [{"text": "Begin."}]}]
-
-        # Build request body
-        request_body = {
-            "modelId": CLAUDE_MODEL_ID,
-            "messages": converse_messages,
-            "inferenceConfig": {
-                "temperature": temperature,
-                "maxTokens": max_tokens,
-            },
-        }
-
-        if system_content:
-            request_body["system"] = system_content
-
-        # Enable prompt caching via performanceConfig
-        request_body["performanceConfig"] = {"latency": "optimized"}
-
-        response = bedrock_client.converse(**request_body)
-
-        # Extract text from response
-        output = response.get("output", {})
-        content = output.get("message", {}).get("content", [])
-        text = ""
-        for block in content:
-            if "text" in block:
-                text += block["text"]
-
-        # Log cache usage if available
-        usage = response.get("usage", {})
-        cache_read = usage.get("cacheReadInputTokens", 0)
-        cache_write = usage.get("cacheWriteInputTokens", 0)
-        input_tokens = usage.get("inputTokens", 0)
-        output_tokens = usage.get("outputTokens", 0)
-        if cache_read > 0 or cache_write > 0:
-            print(f"[Claude] tokens: in={input_tokens} out={output_tokens} cache_read={cache_read} cache_write={cache_write}")
-        else:
-            print(f"[Claude] tokens: in={input_tokens} out={output_tokens}")
-
-        return text.strip()
-
-    except Exception as e:
-        print(f"Bedrock Claude failed, falling back to GPT-4o-mini: {e}")
-        return call_llm(messages, temperature, max_tokens)
-
-
-def call_claude_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -> dict:
-    """Call Claude via Bedrock and parse JSON response. Falls back to GPT-4o-mini."""
-    for attempt in range(retries + 1):
-        try:
-            raw = call_claude(messages, temperature=temperature, max_tokens=max_tokens)
-            result = safe_json(raw)
-            if result:
-                return result
-            if attempt < retries:
-                messages = messages + [
-                    {"role": "assistant", "content": raw},
-                    {"role": "user", "content": "Return ONLY valid JSON. No markdown, no explanation."}
-                ]
-        except Exception as e:
-            print(f"Claude JSON attempt {attempt+1} failed: {e}")
-            if attempt == retries:
-                # Final fallback to GPT-4o-mini
-                print("Falling back to GPT-4o-mini for JSON call")
-                return call_llm_json(messages, temperature, max_tokens, retries=1)
     return {}
 
 
@@ -1206,7 +1097,7 @@ def evaluate_answer_llm(session: dict, question: str, answer: str, difficulty: s
     if not answer or question_type == "greeting":
         return None
     prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type)
-    result = call_claude_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=500)
+    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=500)
     return result if result else None
 
 def generate_question(session: dict, candidate_answer: str = None) -> dict:
@@ -1307,7 +1198,7 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     # Step 2: Generate next question with Claude Sonnet 4.6 via Bedrock (prompt cached)
     t_qgen_start = time.time()
-    result = call_claude_json(messages, temperature=0.65, max_tokens=400)
+    result = call_llm_json(messages, temperature=0.65, max_tokens=400)
     t_qgen = time.time() - t_qgen_start
     print(f"[Timing] Question gen: {t_qgen:.2f}s | Type: {q_type} | Skill: {current_skill} | Q: {(result or {}).get('question', 'FALLBACK')[:80]}")
 
@@ -1519,20 +1410,20 @@ def synthesize_speech_polly(text: str) -> str:
 
 
 def synthesize_speech(text: str) -> str:
-    """TTS with fallback: Pocket TTS -> Mistral Voxtral."""
-    # Primary: Pocket TTS (local, free, voice cloning)
-    if pocket_tts_model and pocket_tts_voice_state:
-        try:
-            return synthesize_speech_pocket(text)
-        except Exception as e:
-            print(f"Pocket TTS failed, falling back to Mistral: {e}")
-
-    # Fallback: Mistral Voxtral (voice cloning)
+    """TTS with fallback: Mistral Voxtral -> Pocket TTS."""
+    # Primary: Mistral Voxtral (voice cloning)
     if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
         try:
             return synthesize_speech_mistral(text)
         except Exception as e:
-            print(f"Mistral TTS also failed: {e}")
+            print(f"Mistral TTS failed, falling back to Pocket TTS: {e}")
+
+    # Fallback: Pocket TTS (local, free, voice cloning)
+    if pocket_tts_model and pocket_tts_voice_state:
+        try:
+            return synthesize_speech_pocket(text)
+        except Exception as e:
+            print(f"Pocket TTS also failed: {e}")
 
     return ""
 
