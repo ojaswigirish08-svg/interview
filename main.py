@@ -36,6 +36,17 @@ polly_client = boto3.client(
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
 )
 
+# AWS Bedrock — Claude Sonnet 4.6 (for question generation + evaluation)
+BEDROCK_REGION = os.getenv("AWS_BEDROCK_REGION", os.getenv("AWS_REGION", "us-east-1"))
+bedrock_client = boto3.client(
+    "bedrock-runtime",
+    region_name=BEDROCK_REGION,
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+)
+CLAUDE_MODEL_ID = os.getenv("CLAUDE_MODEL_ID", "us.anthropic.claude-sonnet-4-6-20250514-v1:0")
+print(f"AWS Bedrock Claude ready (model: {CLAUDE_MODEL_ID}, region: {BEDROCK_REGION})")
+
 # Cerebras (fast LLM for resume parsing)
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 cerebras_client = None
@@ -95,6 +106,8 @@ except Exception as e:
 
 print("STT: gpt-4o-mini-transcribe -> ElevenLabs Scribe v2")
 print("TTS: Pocket TTS -> Mistral Voxtral")
+print(f"LLM (questions+eval): Claude Sonnet 4.6 via Bedrock (prompt cached) | Fallback: GPT-4o-mini")
+print(f"LLM (resume+warmup): Cerebras Llama 3.1-8b | LLM (report): GPT-4o-mini")
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -318,6 +331,105 @@ def call_llm_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -
             if attempt == retries:
                 raise
     return {}
+
+# ════════════════════════════════════════════════════════════
+# CLAUDE VIA AWS BEDROCK — with prompt caching
+# ════════════════════════════════════════════════════════════
+def call_claude(messages: list, temperature=0.5, max_tokens=1000) -> str:
+    """Call Claude Sonnet 4.6 via AWS Bedrock with prompt caching.
+
+    Prompt caching: The system prompt is marked with cache_control so Bedrock
+    caches it across calls within the same session. The system prompt (~1000 tokens)
+    stays cached for 5 minutes, saving latency and cost on subsequent questions.
+
+    Falls back to GPT-4o-mini if Bedrock fails.
+    """
+    try:
+        # Separate system message from conversation
+        system_content = []
+        converse_messages = []
+
+        for msg in messages:
+            if msg["role"] == "system":
+                # Mark system prompt for caching (Bedrock prompt caching)
+                system_content.append({
+                    "text": msg["content"]
+                })
+            else:
+                converse_messages.append({
+                    "role": msg["role"],
+                    "content": [{"text": msg["content"]}]
+                })
+
+        # Ensure messages alternate user/assistant — Bedrock requires this
+        if not converse_messages:
+            converse_messages = [{"role": "user", "content": [{"text": "Begin."}]}]
+
+        # Build request body
+        request_body = {
+            "modelId": CLAUDE_MODEL_ID,
+            "messages": converse_messages,
+            "inferenceConfig": {
+                "temperature": temperature,
+                "maxTokens": max_tokens,
+            },
+        }
+
+        if system_content:
+            request_body["system"] = system_content
+
+        # Enable prompt caching via performanceConfig
+        request_body["performanceConfig"] = {"latency": "optimized"}
+
+        response = bedrock_client.converse(**request_body)
+
+        # Extract text from response
+        output = response.get("output", {})
+        content = output.get("message", {}).get("content", [])
+        text = ""
+        for block in content:
+            if "text" in block:
+                text += block["text"]
+
+        # Log cache usage if available
+        usage = response.get("usage", {})
+        cache_read = usage.get("cacheReadInputTokens", 0)
+        cache_write = usage.get("cacheWriteInputTokens", 0)
+        input_tokens = usage.get("inputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
+        if cache_read > 0 or cache_write > 0:
+            print(f"[Claude] tokens: in={input_tokens} out={output_tokens} cache_read={cache_read} cache_write={cache_write}")
+        else:
+            print(f"[Claude] tokens: in={input_tokens} out={output_tokens}")
+
+        return text.strip()
+
+    except Exception as e:
+        print(f"Bedrock Claude failed, falling back to GPT-4o-mini: {e}")
+        return call_llm(messages, temperature, max_tokens)
+
+
+def call_claude_json(messages: list, temperature=0.5, max_tokens=1000, retries=2) -> dict:
+    """Call Claude via Bedrock and parse JSON response. Falls back to GPT-4o-mini."""
+    for attempt in range(retries + 1):
+        try:
+            raw = call_claude(messages, temperature=temperature, max_tokens=max_tokens)
+            result = safe_json(raw)
+            if result:
+                return result
+            if attempt < retries:
+                messages = messages + [
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": "Return ONLY valid JSON. No markdown, no explanation."}
+                ]
+        except Exception as e:
+            print(f"Claude JSON attempt {attempt+1} failed: {e}")
+            if attempt == retries:
+                # Final fallback to GPT-4o-mini
+                print("Falling back to GPT-4o-mini for JSON call")
+                return call_llm_json(messages, temperature, max_tokens, retries=1)
+    return {}
+
 
 # ════════════════════════════════════════════════════════════
 # RESUME PARSER
@@ -1090,11 +1202,11 @@ RETURN ONLY VALID JSON:
 
 
 def evaluate_answer_llm(session: dict, question: str, answer: str, difficulty: str, question_type: str) -> dict:
-    """Evaluate candidate answer using GPT-4o-mini for better quality."""
+    """Evaluate candidate answer using Claude Sonnet 4.6 via Bedrock."""
     if not answer or question_type == "greeting":
         return None
     prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type)
-    result = call_llm_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=500)
+    result = call_claude_json([{"role": "user", "content": prompt}], temperature=0.3, max_tokens=500)
     return result if result else None
 
 def generate_question(session: dict, candidate_answer: str = None) -> dict:
@@ -1190,8 +1302,8 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
             last_entry.get("question_type", "")
         )
 
-    # Step 2: Generate next question with Cerebras (faster)
-    result = call_cerebras_json(messages, temperature=0.65, max_tokens=400)
+    # Step 2: Generate next question with Claude Sonnet 4.6 via Bedrock (prompt cached)
+    result = call_claude_json(messages, temperature=0.65, max_tokens=400)
 
     if not result or "question" not in result:
         fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
