@@ -95,7 +95,7 @@ except Exception as e:
     print(f"Pocket TTS failed to load: {e}")
 
 print("STT: gpt-4o-mini-transcribe -> ElevenLabs Scribe v2")
-print("TTS: Mistral Voxtral -> Pocket TTS")
+print("TTS: Pocket TTS -> Mistral Voxtral")
 print("LLM (questions+eval+report): GPT-4o-mini | LLM (resume+warmup): Cerebras Llama 3.1-8b")
 
 # ════════════════════════════════════════════════════════════
@@ -1181,26 +1181,46 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
 
     messages[0] = {"role": "system", "content": enhanced_prompt}
 
-    # Step 1: Evaluate previous answer with Claude Sonnet 4.6
+    # Step 1+2: Evaluate previous answer AND generate next question IN PARALLEL
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     evaluation = None
-    if candidate_answer and session.get("history"):
+    result = None
+    t_parallel_start = time.time()
+
+    def _do_eval():
         last_entry = session["history"][-1]
-        t_eval_start = time.time()
-        evaluation = evaluate_answer_llm(
+        return evaluate_answer_llm(
             session,
             last_entry.get("question", ""),
             candidate_answer,
             last_entry.get("difficulty", "basic"),
             last_entry.get("question_type", "")
         )
-        t_eval = time.time() - t_eval_start
-        print(f"[Timing] Evaluation: {t_eval:.2f}s | Score: {(evaluation or {}).get('score', '?')} | Quality: {(evaluation or {}).get('quality', '?')}")
 
-    # Step 2: Generate next question with Claude Sonnet 4.6 via Bedrock (prompt cached)
-    t_qgen_start = time.time()
-    result = call_llm_json(messages, temperature=0.65, max_tokens=400)
-    t_qgen = time.time() - t_qgen_start
-    print(f"[Timing] Question gen: {t_qgen:.2f}s | Type: {q_type} | Skill: {current_skill} | Q: {(result or {}).get('question', 'FALLBACK')[:80]}")
+    def _do_qgen():
+        return call_llm_json(messages, temperature=0.65, max_tokens=400)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if candidate_answer and session.get("history"):
+            futures["eval"] = executor.submit(_do_eval)
+        futures["qgen"] = executor.submit(_do_qgen)
+
+        for name, future in futures.items():
+            try:
+                if name == "eval":
+                    evaluation = future.result()
+                elif name == "qgen":
+                    result = future.result()
+            except Exception as e:
+                print(f"[Parallel] {name} failed: {e}")
+
+    t_parallel = time.time() - t_parallel_start
+    eval_score = (evaluation or {}).get('score', '?')
+    eval_quality = (evaluation or {}).get('quality', '?')
+    q_preview = (result or {}).get('question', 'FALLBACK')[:80]
+    print(f"[Timing] Parallel (eval+qgen): {t_parallel:.2f}s | Eval: {eval_score}/{eval_quality} | Type: {q_type} | Skill: {current_skill} | Q: {q_preview}")
 
     if not result or "question" not in result:
         fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"], ["your domain"])[0]
@@ -1410,20 +1430,20 @@ def synthesize_speech_polly(text: str) -> str:
 
 
 def synthesize_speech(text: str) -> str:
-    """TTS with fallback: Mistral Voxtral -> Pocket TTS."""
-    # Primary: Mistral Voxtral (voice cloning)
-    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
-        try:
-            return synthesize_speech_mistral(text)
-        except Exception as e:
-            print(f"Mistral TTS failed, falling back to Pocket TTS: {e}")
-
-    # Fallback: Pocket TTS (local, free, voice cloning)
+    """TTS with fallback: Pocket TTS -> Mistral Voxtral."""
+    # Primary: Pocket TTS (local, CPU, free, voice cloning — no network latency)
     if pocket_tts_model and pocket_tts_voice_state:
         try:
             return synthesize_speech_pocket(text)
         except Exception as e:
-            print(f"Pocket TTS also failed: {e}")
+            print(f"Pocket TTS failed, falling back to Mistral Voxtral: {e}")
+
+    # Fallback: Mistral Voxtral (voice cloning — network API)
+    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
+        try:
+            return synthesize_speech_mistral(text)
+        except Exception as e:
+            print(f"Mistral TTS also failed: {e}")
 
     return ""
 
