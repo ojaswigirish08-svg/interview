@@ -1234,8 +1234,8 @@ def generate_greeting(session: dict) -> dict:
     candidate_name = strip_initials(resume.get("candidate_name", "Candidate"))
     greeting = (
         f"Hi {candidate_name}! Welcome to the interview. "
-        "We'll start with a few warm-up questions, then move into the technical round. "
-        "Let's get started!"
+        "Before we begin, please introduce yourself — your background, experience, and what you've been working on recently. "
+        "After that, we'll start with a few warm-up questions and then move into the technical round."
     )
     return {
         "question": greeting,
@@ -1620,10 +1620,14 @@ def generate_report(session: dict) -> dict:
 
     topic_performance = {}
     for t, data in topic_map.items():
+        # Only highlight skills truly tested (2+ questions on the topic)
+        if len(data["scores"]) < 2:
+            continue
         avg_t = sum(data["scores"]) / len(data["scores"])
         rating = "Strong" if avg_t >= 7.5 else "Adequate" if avg_t >= 5.5 else "Needs Work" if avg_t >= 3.0 else "Weak"
         topic_performance[t] = {
             "score": int(avg_t * 10), "rating": rating,
+            "questions_asked": len(data["scores"]),
             "questions": data["questions"][:2], "sample_answers": data["answers"][:1]
         }
 
@@ -1667,12 +1671,17 @@ def generate_report(session: dict) -> dict:
 
     narrative_prompt = f"""You are writing a VLSI mock interview performance report as a senior mentor.
 Be SPECIFIC. Reference actual turns. Never generic.
+IMPORTANT: Do NOT count warmup or greeting questions. Only count technical interview questions.
+Only include skills in domain_strength_deep_dive that were truly tested with 2+ questions. Skip skills that had only 1 question.
 
 CANDIDATE: {resume["level"].replace("_"," ")} | {resume["domain"].replace("_"," ")}
 Education: {resume.get("education","")} | Tools: {", ".join(resume.get("tools",[])[:3])}
 
+TECHNICAL QUESTIONS: {len(scored)} (excluding warmup/greeting)
 SCORES: Technical={technical_score} | Behavioral={behavioral_score} | Integrity={integrity_score} | Overall={overall} ({grade})
 TRAJECTORY: {trajectory} — {trajectory_interp}
+SKILLS FULLY TESTED (2+ questions): {[t for t, d in topic_map.items() if len(d["scores"]) >= 2]}
+SKILLS ONLY TOUCHED (1 question): {[t for t, d in topic_map.items() if len(d["scores"]) < 2]}
 BEHAVIORAL PROFILE: {behavioral_profile}
 SMOOTH TALKER SIGNALS: {session.get("smooth_talker_signals",[])}
 MAX DIFFICULTY REACHED: {max_difficulty}
@@ -1694,6 +1703,7 @@ Return ONLY valid JSON:
   "readiness_statement": "Specific sentence with role and tech node. Example: Ready for trained fresher PD at 28nm. Not ready for sub-14nm.",
   "domain_strength_deep_dive": [
     {{"topic": "name", "rating": "Strong|Adequate|Needs Work|Weak",
+      "questions_asked": "number of questions on this topic",
       "what_was_right": "specific from actual answer with turn ref",
       "what_was_missing": "specific gap with turn ref",
       "one_action": "concrete action not just study more"}}
@@ -1761,7 +1771,7 @@ Return ONLY valid JSON:
         "topic_performance": topic_performance,
         "topic_suspicion": topic_suspicion,
         "contradiction_results": contradiction_results,
-        "turns_completed": len(history),
+        "turns_completed": len(scored),  # Only count technical questions, not warmup/greeting
         "honest_admissions": honest_admissions,
         "integrity_level": integrity_level,
         "integrity_flags": integrity_flags,
@@ -2132,9 +2142,10 @@ async def submit_answer(data: AnswerSubmit):
                 session["early_end_reason"] = "struggling"
                 print(f"[Interview] Early end — candidate struggled in last 4 questions")
 
-    # Determine if interview should end
+    # Determine if interview should end (count only technical turns, not warmup/greeting)
+    technical_turns = session["turn"] - session.get("warmup_turns", 0) - 1  # -1 for greeting
     should_end = (
-        session["turn"] >= 22 or
+        technical_turns >= 20 or
         session["phase"] == "ended" or
         struggling_end or
         result.get("warmup_decision") == "end_not_ready"

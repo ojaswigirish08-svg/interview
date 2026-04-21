@@ -307,7 +307,7 @@ h1,h2,h3,h4{font-family:'Syne',sans-serif}
         <div class="icard">
           <div class="igrid">
             <div class="iitem"><span class="il">Duration</span><br><span class="iv">~30 min</span></div>
-            <div class="iitem"><span class="il">Questions</span><br><span class="iv">18-22 turns</span></div>
+            <div class="iitem"><span class="il">Questions</span><br><span class="iv">~20 technical</span></div>
             <div class="iitem"><span class="il">Mode</span><br><span class="iv">Voice + Text</span></div>
             <div class="iitem"><span class="il">Scoring</span><br><span class="iv">3 dimensions</span></div>
           </div>
@@ -684,8 +684,10 @@ function displayQ(data) {
   document.querySelectorAll('.dpip').forEach((p,i)=>p.classList.toggle('on',i<lv));
 
   const t=data.turn||S.currentTurn;
-  document.getElementById('prog-fill').style.width=Math.min(100,Math.round(t/22*100))+'%';
-  document.getElementById('prog-lbl').textContent=t+' / 22';
+  const warmupTurns=S.warmupTurns||3;
+  const techTurn=Math.max(0,t-warmupTurns-1); // exclude greeting(1) + warmup turns
+  document.getElementById('prog-fill').style.width=Math.min(100,Math.round(techTurn/20*100))+'%';
+  document.getElementById('prog-lbl').textContent=(phase==='greeting'||phase==='warmup')?'Warmup':techTurn+' / 20';
 }
 
 // ══════════════════════════════════════════════════
@@ -924,6 +926,7 @@ async function submitAnswer(answer, dur=0, wc=0, pause=0, mode='text', conf=1.0)
     const d=await r.json();
     if(d.should_end){await endInterview();return;}
     S.currentTurn=d.turn; S.currentPhase=d.phase;
+    if(d.phase==='interview'&&!S.warmupTurns) S.warmupTurns=d.turn-1;
     displayQ(d); await speak(d.question, d.audio);
   } catch(e){ setStatus('Error. Try again.'); setState('idle'); }
 }
@@ -974,7 +977,7 @@ function renderReport(r) {
     <div class="mchip">${esc(r.behavioral_profile||'')}</div>
     <div class="mchip">Max difficulty: ${esc(r.max_difficulty_reached||'basic')}</div>
     <div class="mchip">${r.honest_admissions||0} honest admissions</div>
-    <div class="mchip">${r.turns_completed||0} turns</div>
+    <div class="mchip">${r.turns_completed||0} technical questions</div>
     ${r.smooth_talker_detected?'<div class="mchip" style="background:#fff7ed;border-color:#fed7aa;color:#9a3412">Smooth Talker Detected</div>':''}
     ${r.critical_verdict?'<div class="mchip" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">CRITICAL RISK</div>':''}
   </div>`;
