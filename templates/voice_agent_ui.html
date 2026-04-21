@@ -376,10 +376,10 @@
             </div>
 
             <div class="detail-row">
-                <div class="detail-label">skills being tested</div>
+                <div class="detail-label" id="skills-label">skills to be tested</div>
                 <div class="skills-wrap" id="skills-wrap">
-                    <div class="skill-pill hl">Verilog</div>
-                    <div class="skill-pill hl">STA</div>
+                    <div class="skill-pill">Verilog</div>
+                    <div class="skill-pill">STA</div>
                     <div class="skill-pill">VLSI</div>
                     <div class="skill-pill">Timing</div>
                 </div>
@@ -714,16 +714,18 @@
         const exp = resume.years_experience || 0;
         document.getElementById('d-exp').textContent = exp + (exp === 1 ? ' year' : ' years');
 
-        // Update skills (combine skills and tools)
+        // Update skills (combine skills and tools) — no highlight until actually tested
         const skillsWrap = document.getElementById('skills-wrap');
         skillsWrap.innerHTML = '';
         const allSkills = [...(resume.skills || []), ...(resume.tools || [])];
         const uniqueSkills = [...new Set(allSkills)];
-        uniqueSkills.slice(0, 8).forEach((skill, i) => {
+        window._skillPills = {};
+        uniqueSkills.slice(0, 8).forEach((skill) => {
             const pill = document.createElement('div');
-            pill.className = 'skill-pill' + (i < 3 ? ' hl' : '');
+            pill.className = 'skill-pill';  // No highlight — only highlight when tested
             pill.textContent = skill;
             skillsWrap.appendChild(pill);
+            window._skillPills[skill.toLowerCase()] = pill;
         });
 
         // Update mode badge
@@ -766,6 +768,17 @@
         const phase = data.phase || 'interview';
         document.getElementById('live-badge').textContent = (phase === 'warmup' || phase === 'greeting') ? 'warmup' : 'live';
         document.getElementById('live-badge').classList.add('active');
+
+        // Highlight skills only when they are actually being tested in the question
+        if (phase === 'interview' && window._skillPills) {
+            document.getElementById('skills-label').textContent = 'skills tested';
+            const qLower = (data.question || '').toLowerCase();
+            Object.entries(window._skillPills).forEach(([skill, pill]) => {
+                if (qLower.includes(skill.toLowerCase())) {
+                    pill.classList.add('hl');
+                }
+            });
+        }
     }
 
     function detectAudioType(bytes) {
