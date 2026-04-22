@@ -4,6 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Interview Agent</title>
+    <!-- TensorFlow.js BlazeFace — lightweight face detection in browser -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.20.0/dist/tf-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.20.0/dist/tf-converter.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.20.0/dist/tf-backend-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
 
@@ -543,21 +548,17 @@
     })();
 
     // ════════════════════════════════════════════════════════════
-    // CAMERA PRESENCE DETECTION — warn if candidate leaves camera
+    // FACE DETECTION — BlazeFace (TensorFlow.js)
+    // Warns if no face detected, ends interview on repeated absence
     // ════════════════════════════════════════════════════════════
-    (function initCameraPresenceDetection() {
+    (function initFaceDetection() {
         const video = document.getElementById('cam-video');
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.width = 64;  // Small — just need pixel data, not high res
-        canvas.height = 48;
-
-        let prevFrame = null;
-        let noMovementCount = 0;
+        let blazeModel = null;
+        let noFaceCount = 0;
         let cameraWarnings = 0;
-        const CHECK_INTERVAL = 2000;      // Check every 2 seconds
-        const MOVEMENT_THRESHOLD = 5;     // Min pixel difference to count as movement
-        const NO_MOVEMENT_LIMIT = 4;      // 4 checks (8 seconds) with no movement = warning
+        let detecting = false;
+        const CHECK_INTERVAL = 2500;      // Check every 2.5 seconds
+        const NO_FACE_LIMIT = 2;          // 2 consecutive no-face checks (5 seconds) = warning
 
         // Warning overlay for camera
         const camWarningOverlay = document.createElement('div');
@@ -566,9 +567,9 @@
         camWarningOverlay.innerHTML = `
             <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
                 <div style="font-size:40px;margin-bottom:12px;">&#128247;</div>
-                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Please Stay in Front of the Camera</div>
+                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Face Not Detected</div>
                 <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                    We could not detect your presence on camera.<br>
+                    We cannot see your face on camera.<br>
                     Please make sure you are visible and well-lit.<br>
                     <strong>Continued absence will end the interview.</strong>
                 </div>
@@ -579,63 +580,59 @@
         document.body.appendChild(camWarningOverlay);
         document.getElementById('cam-warning-btn').addEventListener('click', () => {
             camWarningOverlay.style.display = 'none';
-            noMovementCount = 0;  // Reset after acknowledgment
+            noFaceCount = 0;
         });
 
-        function getFrameData() {
+        // Load BlazeFace model
+        async function loadModel() {
             try {
-                if (!video.srcObject || video.readyState < 2) return null;
-                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                await tf.setBackend('webgl');
+                await tf.ready();
+                blazeModel = await blazeface.load();
+                console.log('[FaceDetection] BlazeFace model loaded');
             } catch(e) {
-                return null;
+                console.warn('[FaceDetection] BlazeFace failed to load:', e);
             }
         }
+        loadModel();
 
-        function compareFrames(current, previous) {
-            if (!current || !previous || current.length !== previous.length) return 999;
-            let diff = 0;
-            // Sample every 16th pixel (R channel only) for speed
-            for (let i = 0; i < current.length; i += 64) {
-                diff += Math.abs(current[i] - previous[i]);
-            }
-            return diff / (current.length / 64);
-        }
+        // Detect faces
+        async function checkFace() {
+            if (!sessionOn || interviewEnded || !blazeModel || detecting) return;
+            if (!video.srcObject || video.readyState < 2) return;
 
-        setInterval(() => {
-            if (!sessionOn || interviewEnded) return;
+            detecting = true;
+            try {
+                const predictions = await blazeModel.estimateFaces(video, false);
+                const faceFound = predictions.length > 0;
 
-            const currentFrame = getFrameData();
-            if (!currentFrame) return;
+                if (faceFound) {
+                    noFaceCount = 0;
+                } else {
+                    noFaceCount++;
+                    console.log(`[FaceDetection] No face detected (${noFaceCount}/${NO_FACE_LIMIT})`);
 
-            if (prevFrame) {
-                const movement = compareFrames(currentFrame, prevFrame);
-
-                if (movement < MOVEMENT_THRESHOLD) {
-                    noMovementCount++;
-
-                    if (noMovementCount >= NO_MOVEMENT_LIMIT) {
+                    if (noFaceCount >= NO_FACE_LIMIT) {
                         cameraWarnings++;
-                        sendAntiCheat('camera_absence', `warnings:${cameraWarnings},no_movement:${noMovementCount}`);
+                        sendAntiCheat('face_not_detected', `warnings:${cameraWarnings},consecutive:${noFaceCount}`);
 
                         if (cameraWarnings === 1) {
-                            // First warning — show popup
                             camWarningOverlay.style.display = 'flex';
                         } else if (cameraWarnings >= 2) {
-                            // Second warning — end interview
                             camWarningOverlay.style.display = 'none';
-                            sendAntiCheat('camera_absence_termination', `left_camera_${cameraWarnings}_times`);
-                            endSessionWithMessage('Interview ended — candidate not detected on camera.');
+                            sendAntiCheat('face_absence_termination', `no_face_${cameraWarnings}_times`);
+                            endSessionWithMessage('Interview ended — face not detected on camera.');
                         }
-                        noMovementCount = 0;  // Reset counter after action
+                        noFaceCount = 0;
                     }
-                } else {
-                    noMovementCount = 0;  // Reset on movement detected
                 }
+            } catch(e) {
+                // Silently ignore detection errors
             }
+            detecting = false;
+        }
 
-            prevFrame = currentFrame;
-        }, CHECK_INTERVAL);
+        setInterval(checkFace, CHECK_INTERVAL);
     })();
 
     function updateQuestionCount(n) {
