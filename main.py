@@ -57,6 +57,14 @@ if ELEVENLABS_API_KEY:
 else:
     print("ElevenLabs not configured.")
 
+# LMNT TTS (fast voice cloning)
+LMNT_API_KEY = os.getenv("LMNT_API_KEY", "")
+LMNT_VOICE_ID = os.getenv("LMNT_VOICE_ID", "")
+if LMNT_API_KEY and LMNT_VOICE_ID:
+    print(f"LMNT TTS ready (voice: {LMNT_VOICE_ID[:12]}...)")
+else:
+    print("LMNT TTS not configured.")
+
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
 # Load reference audio for Mistral voice cloning
@@ -95,7 +103,7 @@ except Exception as e:
     print(f"Pocket TTS failed to load: {e}")
 
 print("STT: gpt-4o-mini-transcribe -> ElevenLabs Scribe v2")
-print("TTS: Pocket TTS -> Mistral Voxtral")
+print("TTS: LMNT -> Pocket TTS")
 print("LLM (questions+eval+report): GPT-4o-mini | LLM (resume+warmup): Cerebras Llama 3.1-8b")
 
 # ════════════════════════════════════════════════════════════
@@ -1477,10 +1485,34 @@ def get_trajectory_interpretation(t: str) -> str:
 # ════════════════════════════════════════════════════════════
 # TTS
 # ════════════════════════════════════════════════════════════
+def synthesize_speech_lmnt(text: str) -> str:
+    """Primary TTS: LMNT (fast voice cloning API, ~2-3s)."""
+    resp = http_requests.post(
+        "https://api.lmnt.com/v1/ai/speech",
+        headers={
+            "X-API-Key": LMNT_API_KEY,
+            "Content-Type": "application/json",
+        },
+        json={
+            "voice": LMNT_VOICE_ID,
+            "text": text[:1500],
+            "format": "mp3",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    content_type = resp.headers.get("Content-Type", "")
+    if "json" in content_type:
+        data = resp.json()
+        if "audio" in data:
+            return base64.b64encode(base64.b64decode(data["audio"])).decode("utf-8")
+    # Raw binary audio
+    return base64.b64encode(resp.content).decode("utf-8")
+
+
 def synthesize_speech_pocket(text: str) -> str:
-    """Primary TTS: Pocket TTS (local, CPU, free, voice cloning)."""
+    """Fallback TTS: Pocket TTS (local, CPU, free, voice cloning)."""
     audio = pocket_tts_model.generate_audio(pocket_tts_voice_state, text[:1500])
-    # Convert to WAV bytes in memory, then to MP3-compatible base64
     import io
     wav_buffer = io.BytesIO()
     scipy.io.wavfile.write(wav_buffer, pocket_tts_model.sample_rate, audio.numpy())
@@ -1489,7 +1521,7 @@ def synthesize_speech_pocket(text: str) -> str:
 
 
 def synthesize_speech_mistral(text: str) -> str:
-    """Fallback TTS 1: Mistral Voxtral with voice cloning."""
+    """Fallback TTS: Mistral Voxtral with voice cloning."""
     resp = http_requests.post(
         "https://api.mistral.ai/v1/audio/speech",
         headers={
@@ -1510,7 +1542,7 @@ def synthesize_speech_mistral(text: str) -> str:
 
 
 def synthesize_speech_polly(text: str) -> str:
-    """Fallback TTS 2: AWS Polly with Amy neural voice."""
+    """Fallback TTS: AWS Polly with Amy neural voice."""
     resp = polly_client.synthesize_speech(
         Text=text[:1500], OutputFormat="mp3",
         VoiceId="Amy", Engine="neural"
@@ -1519,20 +1551,20 @@ def synthesize_speech_polly(text: str) -> str:
 
 
 def synthesize_speech(text: str) -> str:
-    """TTS with fallback: Pocket TTS -> Mistral Voxtral."""
-    # Primary: Pocket TTS (local, CPU, free, voice cloning — no network latency)
+    """TTS with fallback: LMNT -> Pocket TTS."""
+    # Primary: LMNT (fast voice cloning, ~2-3s)
+    if LMNT_API_KEY and LMNT_VOICE_ID:
+        try:
+            return synthesize_speech_lmnt(text)
+        except Exception as e:
+            print(f"LMNT TTS failed, falling back to Pocket TTS: {e}")
+
+    # Fallback: Pocket TTS (local, CPU, free)
     if pocket_tts_model and pocket_tts_voice_state:
         try:
             return synthesize_speech_pocket(text)
         except Exception as e:
-            print(f"Pocket TTS failed, falling back to Mistral Voxtral: {e}")
-
-    # Fallback: Mistral Voxtral (voice cloning — network API)
-    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
-        try:
-            return synthesize_speech_mistral(text)
-        except Exception as e:
-            print(f"Mistral TTS also failed: {e}")
+            print(f"Pocket TTS also failed: {e}")
 
     return ""
 
