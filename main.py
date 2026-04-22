@@ -348,6 +348,7 @@ Return ONLY this JSON (no markdown):
   "email": "email if found or empty string",
   "phone": "phone if found or empty string",
   "skills": ["skill1", "skill2", "skill3"],
+  "vlsi_skills": ["only VLSI/semiconductor relevant skills"],
   "is_vlsi_suitable": true,
   "rejection_reason": "",
   "domain": "analog_layout",
@@ -363,6 +364,7 @@ Return ONLY this JSON (no markdown):
 FIELD INSTRUCTIONS:
 - candidate_name: Extract exact name from resume header (e.g., "Rahul Sharma", "Priya Singh")
 - skills: List ALL technical skills found (programming, tools, concepts, etc.)
+- vlsi_skills: List ONLY skills directly relevant to VLSI/Semiconductor interview. Include: circuit concepts (CMOS, MOSFET, latch-up, ESD, parasitic, matching), design flow (RTL, synthesis, STA, floorplan, placement, CTS, routing, DRC, LVS, tapeout, GDS-II), verification (UVM, SVA, coverage, formal, simulation, testbench), EDA tools (Cadence, Synopsys, Mentor, ICC2, Innovus, Virtuoso, PrimeTime, VCS, Questa, Calibre), HDL (Verilog, VHDL, SystemVerilog). Exclude: Python, Machine Learning, Random Forest, Web Development, etc.
 - is_vlsi_suitable: true if resume has VLSI/Semiconductor/Electronics background, false otherwise
 - rejection_reason: If not suitable, explain why (e.g., "Resume is for Software Development, not VLSI"). Empty string if suitable.
 - domain: analog_layout | physical_design | design_verification (classify based on skills/experience)
@@ -1104,8 +1106,11 @@ def generate_question(session: dict, candidate_answer: str = None) -> dict:
     q_type, extra = decide_question_type(session)
     resume = session.get("resume", {})
 
-    # Get all skills to cover randomly
-    all_skills = resume.get("skills", []) + resume.get("tools", [])
+    # Use LLM-filtered VLSI skills from resume parsing — no hardcoded list
+    all_skills = resume.get("vlsi_skills", [])
+    if not all_skills:
+        # Fallback: use domain topics if vlsi_skills is empty (old resumes without this field)
+        all_skills = resume.get("tools", []) + DOMAIN_TOPICS.get(resume.get("domain", ""), [])
     skills_covered = session.get("skills_covered_in_interview", [])
 
     # Skip topics where candidate clearly doesn't know (after 2 failed recovery attempts)
@@ -2166,7 +2171,7 @@ async def submit_answer(data: AnswerSubmit):
     session["last_topic"] = topic
     session["last_question_type"] = result["question_type"]
 
-    # Check if candidate is struggling — last 4 consecutive interview answers all weak
+    # Check if candidate is struggling — early stop with polite message
     struggling_end = False
     if session["phase"] == "interview" and session["turn"] >= 8:
         recent_interview = [
@@ -2174,18 +2179,65 @@ async def submit_answer(data: AnswerSubmit):
             if h.get("evaluation") and h["phase"] == "interview"
             and (h.get("evaluation") or {}).get("quality") not in ("warmup", None)
         ]
-        if len(recent_interview) >= 4:
-            last_4 = recent_interview[-4:]
-            all_struggling = all(
-                h["evaluation"].get("quality") in ("weak", "honest_admission")
-                and (h["evaluation"].get("score") or 5) <= 3
-                for h in last_4
-            )
-            if all_struggling:
-                struggling_end = True
-                session["phase"] = "ended"
-                session["early_end_reason"] = "struggling"
-                print(f"[Interview] Early end — candidate struggled in last 4 questions")
+
+        is_real_mode = session.get("mode") == "real"
+
+        if len(recent_interview) >= 3:
+            # Real mode: stricter — 3 consecutive weak/no-answer triggers early stop
+            # Mock mode: lenient — 4 consecutive weak with score <= 3
+            if is_real_mode:
+                last_3 = recent_interview[-3:]
+                all_struggling = all(
+                    h["evaluation"].get("quality") in ("weak", "honest_admission")
+                    and (h["evaluation"].get("score") or 5) <= 3
+                    for h in last_3
+                )
+                # Also check for no-answer patterns (background noise / silence)
+                no_answer_count = sum(
+                    1 for h in recent_interview[-5:]
+                    if not h.get("answer") or h.get("answer", "").strip() in (
+                        "", "[background noise]", "[silence]", "[laughs]", "[whistles]"
+                    )
+                )
+                if all_struggling or no_answer_count >= 3:
+                    struggling_end = True
+                    session["phase"] = "ended"
+                    session["early_end_reason"] = "struggling_real"
+                    # Replace the generated question with a polite closing
+                    candidate_name = session["resume"].get("candidate_name", "Candidate")
+                    candidate_name = strip_initials(candidate_name)
+                    result["question"] = (
+                        f"Thank you {candidate_name}, I appreciate your time today. "
+                        f"We've covered several topics and I have a good understanding of where you stand. "
+                        f"We'll wrap up here. You'll receive a detailed feedback report shortly. "
+                        f"Keep working on the areas we discussed — with focused practice, you'll get there."
+                    )
+                    result["question_type"] = "farewell"
+                    print(f"[Interview] REAL MODE early end — candidate struggled in last 3 questions or {no_answer_count} no-answers")
+            else:
+                # Mock mode — existing lenient check (4 consecutive weak)
+                if len(recent_interview) >= 4:
+                    last_4 = recent_interview[-4:]
+                    all_struggling = all(
+                        h["evaluation"].get("quality") in ("weak", "honest_admission")
+                        and (h["evaluation"].get("score") or 5) <= 3
+                        for h in last_4
+                    )
+                    if all_struggling:
+                        struggling_end = True
+                        session["phase"] = "ended"
+                        session["early_end_reason"] = "struggling"
+                        candidate_name = session["resume"].get("candidate_name", "Candidate")
+                        candidate_name = strip_initials(candidate_name)
+                        result["question"] = (
+                            f"Alright {candidate_name}, let's pause here. "
+                            f"I can see some of these topics are challenging right now, and that's completely okay. "
+                            f"I'm going to generate a detailed report with specific areas to focus on "
+                            f"and resources that will help you prepare. "
+                            f"Take some time to study those, and come back for another mock when you're ready."
+                        )
+                        result["question_type"] = "farewell"
+                        print(f"[Interview] MOCK MODE early end — candidate struggled in last 4 questions")
 
     # Determine if interview should end (count only technical turns, not warmup/greeting)
     technical_turns = session["turn"] - session.get("warmup_turns", 0) - 1  # -1 for greeting

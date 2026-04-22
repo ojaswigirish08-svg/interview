@@ -1144,17 +1144,52 @@
     };
 
     // ════════════════════════════════════════════════════════════
-    // ANTI-CHEAT — Silent detection, never interrupts interview
+    // ANTI-CHEAT — Warning on first leave, end on second
     // ════════════════════════════════════════════════════════════
     let tabSwitchCount = 0;
+    let tabLeaveWarnings = 0;
     let screenShareStream = null;
 
-    // 1. Tab switch detection
+    // Warning overlay (created once, shown/hidden)
+    const warningOverlay = document.createElement('div');
+    warningOverlay.id = 'tab-warning-overlay';
+    warningOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;';
+    warningOverlay.innerHTML = `
+        <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+            <div style="font-size:40px;margin-bottom:12px;">&#9888;</div>
+            <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Do Not Leave the Interview</div>
+            <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+                You switched away from the interview tab.<br>
+                This has been recorded. <strong>If you leave again, the interview will be ended automatically.</strong>
+            </div>
+            <button id="tab-warning-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+                I Understand — Continue Interview
+            </button>
+        </div>`;
+    document.body.appendChild(warningOverlay);
+    document.getElementById('tab-warning-btn').addEventListener('click', () => {
+        warningOverlay.style.display = 'none';
+    });
+
+    // 1. Tab switch / visibility change detection
     document.addEventListener('visibilitychange', () => {
         if (document.hidden && sessionOn && !interviewEnded) {
             tabSwitchCount++;
-            sendAntiCheat('tab_switch', `count:${tabSwitchCount}`);
-            console.log(`[Anti-cheat] Tab switch detected (${tabSwitchCount})`);
+            tabLeaveWarnings++;
+            sendAntiCheat('tab_switch', `count:${tabSwitchCount},warning:${tabLeaveWarnings}`);
+            console.log(`[Anti-cheat] Tab switch detected (${tabSwitchCount}, warnings: ${tabLeaveWarnings})`);
+        }
+        // Show warning or end when user comes BACK
+        if (!document.hidden && sessionOn && !interviewEnded && tabLeaveWarnings > 0) {
+            if (tabLeaveWarnings === 1) {
+                // First time — show warning popup
+                warningOverlay.style.display = 'flex';
+            } else if (tabLeaveWarnings >= 2) {
+                // Second time — end interview
+                sendAntiCheat('tab_switch_termination', `left_${tabLeaveWarnings}_times`);
+                warningOverlay.style.display = 'none';
+                endSessionWithMessage('Interview ended — you left the interview tab multiple times.');
+            }
         }
     });
 
