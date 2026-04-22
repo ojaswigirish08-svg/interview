@@ -1071,15 +1071,79 @@ function renderReport(r) {
     ${metaRow}
     ${sec1}${secTopic}${sec2}${sec3}${sec4}${sec5}${sec6}${sec7}${sec8}${secNM}
     <div class="dlrow">
-      <button class="btn btn-p" onclick="dlReport()">Download Report</button>
+      <button class="btn btn-p" onclick="dlReport()">Download PDF</button>
       <button class="btn btn-s" onclick="window.location.reload()">Take Another Mock</button>
     </div>`;
 }
 
 function sec(title,content){return `<div class="rsec"><div class="rstitle">${title}</div>${content}</div>`;}
 function dlReport(){
-  const b=new Blob([JSON.stringify(window._report,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='vlsi-report.json';a.click();
+  // Open a new window with just the report content, styled for print/PDF
+  const reportHtml = document.getElementById('rbody').innerHTML;
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`<!DOCTYPE html>
+<html><head><title>VLSI Interview Report</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;color:#0a0a0a;padding:40px 50px;max-width:900px;margin:0 auto;font-size:13px;line-height:1.6}
+h1,h2,h3,h4{font-family:'Syne',sans-serif}
+.rhead{border-bottom:2px solid #e5e7eb;padding-bottom:16px;margin-bottom:24px}
+.rtitle{font-size:24px;font-weight:800;letter-spacing:-1px}
+.rtitle span{color:#f97316}
+.rsub{color:#6b7280;font-size:12px;margin-top:4px}
+.sgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.sc{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;text-align:center}
+.sc.grade{background:#f97316;color:#fff}
+.slb{font-size:9px;font-family:'DM Mono',monospace;color:#9ca3af;text-transform:uppercase;letter-spacing:.5px}
+.grade .slb{color:rgba(255,255,255,.7)}
+.sv{font-size:28px;font-weight:800;font-family:'Syne',sans-serif;margin:4px 0 0}
+.grade .sv{font-size:36px}
+.mrow{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px}
+.mchip{display:inline-flex;padding:4px 10px;border-radius:16px;font-size:10px;font-weight:600;font-family:'DM Mono',monospace;border:1px solid #e5e7eb;background:#f9fafb}
+.rsec{margin-bottom:20px}
+.rstitle{font-size:13px;font-weight:700;font-family:'Syne',sans-serif;border-bottom:1px solid #e5e7eb;padding-bottom:6px;margin-bottom:10px}
+.atext{font-size:13px;line-height:1.7;color:#1f2937}
+.rpill{display:inline-flex;padding:8px 14px;border-radius:6px;background:#fde6d3;border:1px solid #f97316;color:#c2410c;font-weight:600;font-size:12px}
+.stri{padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;margin-bottom:8px}
+.strt{font-weight:600;font-size:12px;margin-bottom:2px}
+.stre{font-size:11px;color:#6b7280}
+.strw{font-size:10px;color:#16a34a;font-family:'DM Mono',monospace}
+.impi{padding:12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:8px}
+.imph{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.impa{font-weight:700;font-size:12px}
+.imptl{font-size:9px;font-family:'DM Mono',monospace;padding:2px 8px;border-radius:12px;font-weight:600}
+.impw{font-size:12px;color:#dc2626;margin-bottom:4px}
+.impwhy{font-size:12px;color:#6b7280;margin-bottom:4px}
+.imps{font-size:12px;font-weight:500;margin-bottom:4px}
+.impr{font-size:11px;color:#2563eb;font-family:'DM Mono',monospace}
+.btext{font-size:13px;line-height:1.7;color:#1f2937;padding:12px;background:#f9fafb;border-radius:8px;border-left:3px solid #f97316}
+.trow{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.tname{font-size:11px;min-width:160px;color:#1f2937}
+.ttrack{flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden}
+.tfill{height:100%;background:#f97316;border-radius:3px}
+.tscore{font-size:10px;font-family:'DM Mono',monospace;color:#9ca3af;min-width:30px;text-align:right}
+.rmi{display:flex;gap:14px;padding:10px 0;border-bottom:1px solid #e5e7eb}
+.rmi:last-child{border-bottom:none}
+.rmw{min-width:70px;font-size:11px;font-family:'DM Mono',monospace;color:#f97316;font-weight:600}
+.rmg{font-weight:600;font-size:12px}
+.resi{padding:10px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:8px}
+.resn{font-weight:600;font-size:12px;margin-bottom:3px}
+.resw{font-size:11px;color:#6b7280;margin-bottom:3px}
+.resa{font-size:11px;color:#f97316;font-weight:500}
+.next-mock{font-size:13px;line-height:1.6;padding:12px;background:#f9fafb;border-radius:8px;border-left:3px solid #f97316}
+.nmi{padding:8px 10px;border-radius:6px;border:1px solid;margin-bottom:6px;font-size:11px}
+.nmi.positive_signal{background:#f0fdf4;border-color:#bbf7d0}
+.nmi.concern_flag{background:#fff7ed;border-color:#fed7aa}
+.nmt{font-weight:600;margin-bottom:2px}
+.nmd{color:#6b7280}
+.dlrow{display:none}
+.sbar-w,.sbar,.sbar-f{display:none}
+@media print{body{padding:20px 30px}  .dlrow{display:none!important}}
+</style></head><body>${reportHtml}</body></html>`);
+  printWindow.document.close();
+  // Wait for fonts to load, then trigger print (Save as PDF)
+  setTimeout(() => { printWindow.print(); }, 800);
 }
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function showHelp(){
