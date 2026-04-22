@@ -2179,8 +2179,61 @@ async def submit_answer(data: AnswerSubmit):
                 "question_type": "farewell"
             }
     else:
-        # Normal interview flow - Generate next question + evaluate previous
-        result = generate_question(session, data.answer)
+        # Detect noise/non-answers — don't waste LLM calls on silence
+        NOISE_PATTERNS = {
+            "[background noise]", "[silence]", "[laughs]", "[whistles]",
+            "[clicking]", "[music]", "[coughing]", "[inaudible]",
+            "[noise]", "[static]", "[background_noise]",
+        }
+        answer_stripped = data.answer.strip().lower()
+        is_noise = (
+            answer_stripped in {p.lower() for p in NOISE_PATTERNS}
+            or len(answer_stripped) <= 2
+            or data.word_count <= 1
+        )
+
+        if is_noise and session["phase"] == "interview":
+            session.setdefault("no_answer_count", 0)
+            session["no_answer_count"] += 1
+            print(f"[Interview] No-answer #{session['no_answer_count']}: '{data.answer[:40]}'")
+
+            # Mark as no-answer in history
+            if current_entry:
+                current_entry["evaluation"] = {
+                    "quality": "no_answer", "accuracy": "not_applicable",
+                    "confidence_level": "low", "quadrant": "honest_confused",
+                    "score": 0, "score_reasoning": "No audible answer detected",
+                    "notes": f"Noise: {data.answer[:50]}"
+                }
+
+            # End interview after 3 consecutive no-answers
+            if session["no_answer_count"] >= 3:
+                candidate_name = strip_initials(session["resume"].get("candidate_name", "Candidate"))
+                is_real = session.get("mode") == "real"
+                session["phase"] = "ended"
+                session["early_end_reason"] = "no_answers"
+                if is_real:
+                    farewell = (
+                        f"Thank you {candidate_name}. We haven't been able to hear your responses "
+                        f"for the last few questions. We'll end the interview here. "
+                        f"Please check your microphone setup and try again when ready."
+                    )
+                else:
+                    farewell = (
+                        f"{candidate_name}, it seems like your microphone isn't picking up your voice. "
+                        f"We'll stop here so you can fix the audio setup. "
+                        f"Once your mic is working, come back for another mock anytime."
+                    )
+                result = {"question": farewell, "question_type": "farewell"}
+                print(f"[Interview] Ending — {session['no_answer_count']} consecutive no-answers")
+            else:
+                # Skip evaluation, just generate next question without passing the noise
+                result = generate_question(session)
+        else:
+            if not is_noise:
+                session["no_answer_count"] = 0  # Reset on real answer
+            # Normal interview flow - Generate next question + evaluate previous
+            result = generate_question(session, data.answer)
 
     if current_entry and result.get("evaluation"):
         eval_data = result["evaluation"]
