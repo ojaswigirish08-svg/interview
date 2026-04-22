@@ -548,17 +548,24 @@
     })();
 
     // ════════════════════════════════════════════════════════════
-    // FACE DETECTION — BlazeFace (TensorFlow.js)
-    // Warns if no face detected, ends interview on repeated absence
+    // FACE DETECTION — BlazeFace (TensorFlow.js) with pixel-diff fallback
     // ════════════════════════════════════════════════════════════
     (function initFaceDetection() {
         const video = document.getElementById('cam-video');
         let blazeModel = null;
+        let useBlazeFace = false;
         let noFaceCount = 0;
         let cameraWarnings = 0;
         let detecting = false;
         const CHECK_INTERVAL = 2500;      // Check every 2.5 seconds
-        const NO_FACE_LIMIT = 2;          // 2 consecutive no-face checks (5 seconds) = warning
+        const NO_FACE_LIMIT = 2;          // 2 consecutive checks (5 seconds) = warning
+
+        // Pixel-diff fallback state
+        let prevFrame = null;
+        const fallbackCanvas = document.createElement('canvas');
+        const fallbackCtx = fallbackCanvas.getContext('2d');
+        fallbackCanvas.width = 64;
+        fallbackCanvas.height = 48;
 
         // Warning overlay for camera
         const camWarningOverlay = document.createElement('div');
@@ -583,56 +590,111 @@
             noFaceCount = 0;
         });
 
-        // Load BlazeFace model
+        // Try loading BlazeFace
         async function loadModel() {
             try {
+                if (typeof tf === 'undefined' || typeof blazeface === 'undefined') {
+                    console.warn('[FaceDetection] TensorFlow.js or BlazeFace not loaded from CDN — using pixel-diff fallback');
+                    return;
+                }
                 await tf.setBackend('webgl');
                 await tf.ready();
                 blazeModel = await blazeface.load();
-                console.log('[FaceDetection] BlazeFace model loaded');
+                useBlazeFace = true;
+                console.log('[FaceDetection] BlazeFace model loaded successfully');
             } catch(e) {
-                console.warn('[FaceDetection] BlazeFace failed to load:', e);
+                console.warn('[FaceDetection] BlazeFace failed, using pixel-diff fallback:', e.message);
+                useBlazeFace = false;
             }
         }
         loadModel();
 
-        // Detect faces
-        async function checkFace() {
-            if (!sessionOn || interviewEnded || !blazeModel || detecting) return;
+        // BlazeFace detection
+        async function checkWithBlazeFace() {
+            try {
+                const predictions = await blazeModel.estimateFaces(video, false);
+                return predictions.length > 0;
+            } catch(e) {
+                console.warn('[FaceDetection] BlazeFace error:', e.message);
+                return null; // null = detection failed, skip this check
+            }
+        }
+
+        // Pixel-diff fallback — detects if scene changed (person left)
+        function checkWithPixelDiff() {
+            try {
+                if (!video.srcObject || video.readyState < 2) return null;
+                fallbackCtx.drawImage(video, 0, 0, fallbackCanvas.width, fallbackCanvas.height);
+                const currentFrame = fallbackCtx.getImageData(0, 0, fallbackCanvas.width, fallbackCanvas.height).data;
+
+                if (!prevFrame) { prevFrame = currentFrame; return true; }
+
+                let diff = 0;
+                for (let i = 0; i < currentFrame.length; i += 64) {
+                    diff += Math.abs(currentFrame[i] - prevFrame[i]);
+                }
+                const avgDiff = diff / (currentFrame.length / 64);
+                prevFrame = currentFrame;
+
+                // Very low brightness = camera covered/black
+                let brightness = 0;
+                for (let i = 0; i < currentFrame.length; i += 16) {
+                    brightness += currentFrame[i];
+                }
+                brightness = brightness / (currentFrame.length / 16);
+
+                if (brightness < 10) return false;  // Screen is black/covered
+                if (avgDiff < 2) return false;       // Completely static = likely empty chair
+                return true;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        // Main check loop
+        async function checkPresence() {
+            if (!sessionOn || interviewEnded || detecting) return;
             if (!video.srcObject || video.readyState < 2) return;
 
             detecting = true;
-            try {
-                const predictions = await blazeModel.estimateFaces(video, false);
-                const faceFound = predictions.length > 0;
+            let personPresent = null;
 
-                if (faceFound) {
-                    noFaceCount = 0;
-                } else {
-                    noFaceCount++;
-                    console.log(`[FaceDetection] No face detected (${noFaceCount}/${NO_FACE_LIMIT})`);
-
-                    if (noFaceCount >= NO_FACE_LIMIT) {
-                        cameraWarnings++;
-                        sendAntiCheat('face_not_detected', `warnings:${cameraWarnings},consecutive:${noFaceCount}`);
-
-                        if (cameraWarnings === 1) {
-                            camWarningOverlay.style.display = 'flex';
-                        } else if (cameraWarnings >= 2) {
-                            camWarningOverlay.style.display = 'none';
-                            sendAntiCheat('face_absence_termination', `no_face_${cameraWarnings}_times`);
-                            endSessionWithMessage('Interview ended — face not detected on camera.');
-                        }
-                        noFaceCount = 0;
-                    }
-                }
-            } catch(e) {
-                // Silently ignore detection errors
+            if (useBlazeFace && blazeModel) {
+                personPresent = await checkWithBlazeFace();
             }
+
+            // Fallback if BlazeFace didn't work
+            if (personPresent === null) {
+                personPresent = checkWithPixelDiff();
+            }
+
+            if (personPresent === null) { detecting = false; return; } // Skip if both failed
+
+            if (personPresent) {
+                noFaceCount = 0;
+            } else {
+                noFaceCount++;
+                console.log(`[FaceDetection] No presence detected (${noFaceCount}/${NO_FACE_LIMIT}) [${useBlazeFace?'blazeface':'pixel-diff'}]`);
+
+                if (noFaceCount >= NO_FACE_LIMIT) {
+                    cameraWarnings++;
+                    sendAntiCheat('face_not_detected', `warnings:${cameraWarnings},method:${useBlazeFace?'blazeface':'pixel-diff'}`);
+
+                    if (cameraWarnings === 1) {
+                        camWarningOverlay.style.display = 'flex';
+                    } else if (cameraWarnings >= 2) {
+                        camWarningOverlay.style.display = 'none';
+                        sendAntiCheat('face_absence_termination', `no_face_${cameraWarnings}_times`);
+                        endSessionWithMessage('Interview ended — candidate not detected on camera.');
+                    }
+                    noFaceCount = 0;
+                }
+            }
+
             detecting = false;
         }
 
-        setInterval(checkFace, CHECK_INTERVAL);
+        setInterval(checkPresence, CHECK_INTERVAL);
     })();
 
     function updateQuestionCount(n) {

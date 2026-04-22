@@ -1795,27 +1795,52 @@ def generate_report(session: dict) -> dict:
     resources = DOMAIN_RESOURCES.get(resume["domain"], [])
     signal_count = suspicion_data.get("signal_count", 0)
 
-    narrative_prompt = f"""You are writing a VLSI mock interview performance report as a senior mentor.
-Be SPECIFIC. Reference actual turns. Never generic.
-IMPORTANT: Do NOT count warmup or greeting questions. Only count technical interview questions.
-Only include skills in domain_strength_deep_dive that were truly tested with 2+ questions. Skip skills that had only 1 question.
+    narrative_prompt = f"""You are a senior VLSI mentor generating a mock interview performance report.
+Your goal is to guide the candidate clearly, honestly, and constructively -- not just evaluate them.
 
+CORE PRINCIPLE:
+The report must feel: Insightful, not robotic. Structured, not paragraph-heavy. Actionable, not generic. Honest, but not discouraging.
+Avoid traditional long paragraphs. Use short sections, bullets, and clear headings.
+
+IMPORTANT FILTERING RULES:
+DO NOT expose: suspicion_score, signal_count, internal flags, or raw system signals.
+Convert them into clean mentor insights instead.
+
+CRITICAL ANALYSIS LOGIC (MANDATORY):
+For each weak area, classify into ONE of:
+- Concept Gap: candidate does not know the topic
+- Articulation Gap: candidate knows but cannot express clearly
+- Behavioral Issue: tone, professionalism, or attitude
+Your report MUST reflect this distinction.
+
+STYLE GUIDELINES:
+- Avoid long paragraphs (max 2-3 lines each)
+- Use bullets wherever possible
+- Keep sentences crisp, no fluff
+- Bad: "The candidate struggled significantly..."
+- Good: "T4: DRC definition incorrect (concept gap)"
+
+TONE: Mentor-like, not judgmental. Direct but respectful. No harsh wording. No over-praise.
+
+NUMERICAL + TECHNICAL EXPECTATION:
+If candidate failed in numericals, explicitly mention: lack of units, lack of scaling intuition, inability to estimate.
+
+ANTI-GENERIC RULE:
+Every important point MUST reference a turn (T4, T5, etc.) OR clearly tie to observed behavior.
+
+INPUT DATA:
 CANDIDATE: {resume["level"].replace("_"," ")} | {resume["domain"].replace("_"," ")}
 Education: {resume.get("education","")} | Tools: {", ".join(resume.get("tools",[])[:3])}
-
 TECHNICAL QUESTIONS: {len(scored)} (excluding warmup/greeting)
-SCORES: Technical={technical_score} | Behavioral={behavioral_score} | Integrity={integrity_score} | Overall={overall} ({grade})
-TRAJECTORY: {trajectory} — {trajectory_interp}
+SCORES: Technical={technical_score} | Behavioral={behavioral_score} | Overall={overall} ({grade})
+TRAJECTORY: {trajectory} -- {trajectory_interp}
 SKILLS FULLY TESTED (2+ questions): {[t for t, d in topic_map.items() if len(d["scores"]) >= 2]}
 SKILLS ONLY TOUCHED (1 question): {[t for t, d in topic_map.items() if len(d["scores"]) < 2]}
 BEHAVIORAL PROFILE: {behavioral_profile}
-SMOOTH TALKER SIGNALS: {session.get("smooth_talker_signals",[])}
 MAX DIFFICULTY REACHED: {max_difficulty}
 HONEST ADMISSIONS: {honest_admissions}
 RECOVERY EVENTS: {recovery_summary}
 CONTRADICTION RESULTS: {contradiction_results}
-INTEGRITY FLAGS: {integrity_flags[:5]}
-SUSPICION SIGNALS: {signal_count}
 NOTABLE MOMENTS: {[m["detail"] for m in session.get("notable_moments",[])[:5]]}
 
 TRANSCRIPT:
@@ -1823,39 +1848,30 @@ TRANSCRIPT:
 
 RESOURCES: {resources}
 
-Return ONLY valid JSON:
+Return ONLY valid JSON (no markdown wrapping):
 {{
-  "overall_assessment": "2-3 specific sentences referencing actual turns and answers",
-  "readiness_statement": "Specific sentence with role and tech node. Example: Ready for trained fresher PD at 28nm. Not ready for sub-14nm.",
-  "domain_strength_deep_dive": [
-    {{"topic": "name", "rating": "Strong|Adequate|Needs Work|Weak",
-      "questions_asked": "number of questions on this topic",
-      "what_was_right": "specific from actual answer with turn ref",
-      "what_was_missing": "specific gap with turn ref",
-      "one_action": "concrete action not just study more"}}
-  ],
+  "quick_snapshot": "2-3 lines max. Mention: strongest signal, biggest gap, one key observation.",
+  "readiness_statement": "One clear sentence. Include role + level + tech node. Example: Ready for trained fresher PD at 28nm. Not ready for sub-14nm.",
   "strengths": [
-    {{"strength": "title", "evidence": "specific moment with turn number", "why_it_matters": "job impact"}}
+    {{"strength": "title", "evidence": "specific moment with turn reference (T4, T7...)", "why_it_matters": "job impact"}}
   ],
-  "improvements": [
-    {{"area": "topic", "what_is_weak": "specific gap",
-      "why_it_matters": "job impact",
-      "suggestion": "specific actionable step with tool or exercise",
-      "resource": "book/chapter/tool with specific section",
-      "timeline": "X weeks"}}
+  "weak_areas": [
+    {{"topic": "name", "gap_type": "concept_gap|articulation_gap|behavioral_issue",
+      "what_happened": "specific observation with turn reference",
+      "why_it_matters": "real job impact",
+      "fix": "specific actionable step"}}
   ],
-  "behavioral_feedback": "2-3 sentences as mentor. Address nervousness, communication, honesty. Reference trajectory.",
-  "smooth_talker_assessment": "One honest sentence about smooth talker pattern with evidence.",
-  "recovery_velocity_feedback": "One sentence about hint-recovery pattern. If no hints, say so.",
-  "recommended_resources": [
-    {{"resource": "title with chapter/section", "why": "addresses specific observed gap", "action": "specific exercise"}}
+  "communication_feedback": "Dedicated section on clarity, structure, confidence, professionalism. If candidate knows but failed to express, highlight clearly: You likely knew the concept, but articulation broke down.",
+  "learning_plan": [
+    {{"topic": "name", "action": "exact action to take", "resource": "book/chapter/tool with specific section", "timeline": "X weeks"}}
   ],
   "readiness_roadmap": [
-    {{"milestone": "Week 2", "goal": "specific measurable goal", "action": "specific daily action"}},
-    {{"milestone": "Week 4", "goal": "specific measurable goal", "action": "specific daily action"}},
-    {{"milestone": "Week 6", "goal": "specific measurable goal", "action": "specific daily action"}}
+    {{"milestone": "Week 2", "goal": "one-line specific goal"}},
+    {{"milestone": "Week 4", "goal": "one-line specific goal"}},
+    {{"milestone": "Week 6", "goal": "one-line specific goal"}}
   ],
-  "next_mock_recommendation": "Specific topics, difficulty level, whether lab/hands-on should come first"
+  "next_mock_recommendation": "Topics to focus, difficulty level, whether to include hints.",
+  "mentor_note": "2-3 lines. Encourage improvement. Reinforce key mindset shift. Not generic."
 }}"""
 
     narrative = call_llm_json(
@@ -1865,21 +1881,21 @@ Return ONLY valid JSON:
 
     if not narrative:
         narrative = {
-            "overall_assessment": "Interview completed. Detailed analysis could not be generated.",
+            "quick_snapshot": "Interview completed. Detailed analysis could not be generated.",
             "readiness_statement": "Continue preparation before applying.",
-            "domain_strength_deep_dive": [],
             "strengths": [{"strength": "Completed interview", "evidence": "Participated fully", "why_it_matters": "Shows commitment"}],
-            "improvements": [{"area": "Technical depth", "what_is_weak": "Needs practice",
-                               "why_it_matters": "Core job requirement",
-                               "suggestion": "Study primary domain topics daily",
-                               "resource": resources[0] if resources else "Domain textbook",
-                               "timeline": "4 weeks"}],
-            "behavioral_feedback": "Work on building confidence through consistent practice.",
-            "smooth_talker_assessment": "Insufficient data to assess smooth talker pattern.",
-            "recovery_velocity_feedback": "No recovery events recorded in this session.",
-            "recommended_resources": [{"resource": r, "why": "Core resource", "action": "Study key chapters"} for r in resources[:3]],
-            "readiness_roadmap": [{"milestone": "Week 2", "goal": "Fundamentals", "action": "Review core concepts daily"}],
-            "next_mock_recommendation": "Focus on weakest topics. Try intermediate difficulty next session."
+            "weak_areas": [{"topic": "Technical depth", "gap_type": "concept_gap",
+                           "what_happened": "Needs more practice across core topics",
+                           "why_it_matters": "Core job requirement",
+                           "fix": "Study primary domain topics daily"}],
+            "communication_feedback": "Work on building confidence and structuring answers clearly.",
+            "learning_plan": [{"topic": "Core fundamentals", "action": "Review key concepts daily",
+                              "resource": resources[0] if resources else "Domain textbook", "timeline": "4 weeks"}],
+            "readiness_roadmap": [{"milestone": "Week 2", "goal": "Master fundamentals"},
+                                  {"milestone": "Week 4", "goal": "Practice scenario questions"},
+                                  {"milestone": "Week 6", "goal": "Mock interview with numerical focus"}],
+            "next_mock_recommendation": "Focus on weakest topics. Try intermediate difficulty next session.",
+            "mentor_note": "Every expert was once a beginner. Focus on understanding, not memorizing. Come back when ready."
         }
 
     return {

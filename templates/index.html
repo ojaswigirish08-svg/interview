@@ -982,91 +982,79 @@ function renderReport(r) {
     ${r.critical_verdict?'<div class="mchip" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">CRITICAL RISK</div>':''}
   </div>`;
 
-  // Sec 1: Overall
-  const sec1=sec('Overall Assessment',`
-    <div class="atext">${esc(r.overall_assessment||'')}</div>
+  // Sec 1: Quick Snapshot + Readiness
+  const sec1=sec('Quick Snapshot',`
+    <div class="atext">${esc(r.quick_snapshot||r.overall_assessment||'')}</div>
     <div class="rpill" style="margin-top:12px">&#9654; ${esc(r.readiness_statement||'')}</div>
     <div style="font-size:13px;color:var(--g600);font-style:italic;margin-top:8px">${esc(r.trajectory_interpretation||'')}</div>`);
-
-  // Sec 2: Domain deep dive
-  const ddItems=(r.domain_strength_deep_dive||[]).map(d=>`
-    <div class="ddi">
-      <div class="ddh"><span class="ddt">${esc(d.topic)}</span>
-        <span class="rbadge r-${(d.rating||'').replace(' ','-')}">${esc(d.rating)}</span></div>
-      <div class="ddrow">
-        <div class="ddgood">&#10003; ${esc(d.what_was_right||'')}</div>
-        <div class="ddgap">&#8594; ${esc(d.what_was_missing||'')}</div>
-      </div>
-      <div class="ddact">Action: ${esc(d.one_action||'')}</div>
-    </div>`).join('');
-  const sec2=ddItems?sec('Domain Strength Deep Dive',`<div class="ddlist">${ddItems}</div>`):'';
 
   // Topic chart
   const topicBars=Object.entries(r.topic_performance||{}).map(([t,v])=>{
     const sc=typeof v==='object'?v.score:v;
-    const topicSusp=(r.topic_suspicion||{})[t];
-    const suspicious=topicSusp&&topicSusp.score>15;
     return `<div class="trow">
-      <span class="tname" style="${suspicious?'color:var(--rd)':''}">${esc(t)}${suspicious?' &#9888;':''}</span>
+      <span class="tname">${esc(t)}</span>
       <div class="ttrack"><div class="tfill" style="width:${sc}%"></div></div>
       <span class="tscore">${sc}</span>
     </div>`;
   }).join('');
   const secTopic=topicBars?sec('Topic Performance',`<div class="tchart">${topicBars}</div>`):'';
 
-  // Sec 3: Strengths
+  // Sec 2: Strengths (What Went Well)
   const strItems=(r.strengths||[]).map(st=>`
     <div class="stri">
       <div class="strt">${esc(typeof st==='object'?st.strength:st)}</div>
       ${typeof st==='object'&&st.evidence?`<div class="stre">Evidence: ${esc(st.evidence)}</div>`:''}
       ${typeof st==='object'&&st.why_it_matters?`<div class="strw">${esc(st.why_it_matters)}</div>`:''}
     </div>`).join('');
-  const sec3=sec('Strengths Observed',`<div class="strlist">${strItems||'<p style="color:var(--g400);font-size:14px">No specific strengths recorded — complete a full interview for detailed analysis.</p>'}</div>`);
+  const sec2=sec('What Went Well',`<div class="strlist">${strItems||'<p style="color:var(--g400);font-size:14px">No specific strengths recorded.</p>'}</div>`);
 
-  // Sec 4: Improvements
-  const impItems=(r.improvements||[]).map(i=>`
-    <div class="impi">
-      <div class="imph"><span class="impa">${esc(i.area||i)}</span><span class="imptl">${esc(i.timeline||'')}</span></div>
-      ${i.what_is_weak?`<div class="impw">${esc(i.what_is_weak)}</div>`:''}
+  // Sec 3: Where You Lost Marks (weak_areas with gap_type)
+  const gapColors={'concept_gap':'var(--rd)','articulation_gap':'var(--yl)','behavioral_issue':'var(--acc)'};
+  const gapLabels={'concept_gap':'Concept Gap','articulation_gap':'Articulation Gap','behavioral_issue':'Behavioral Issue'};
+  const weakItems=(r.weak_areas||r.improvements||[]).map(i=>{
+    const gapType=i.gap_type||'';
+    const gapColor=gapColors[gapType]||'var(--g400)';
+    const gapLabel=gapLabels[gapType]||gapType.replace(/_/g,' ');
+    return `<div class="impi">
+      <div class="imph">
+        <span class="impa">${esc(i.topic||i.area||'')}</span>
+        ${gapType?`<span class="imptl" style="background:${gapColor}20;color:${gapColor};border:1px solid ${gapColor}40">${gapLabel}</span>`:''}
+      </div>
+      ${i.what_happened||i.what_is_weak?`<div class="impw">${esc(i.what_happened||i.what_is_weak)}</div>`:''}
       ${i.why_it_matters?`<div class="impwhy">${esc(i.why_it_matters)}</div>`:''}
-      ${i.suggestion?`<div class="imps">&#8594; ${esc(i.suggestion)}</div>`:''}
+      ${i.fix||i.suggestion?`<div class="imps">&#8594; ${esc(i.fix||i.suggestion)}</div>`:''}
       ${i.resource?`<div class="impr">&#128218; ${esc(i.resource)}</div>`:''}
+    </div>`;
+  }).join('');
+  const sec3=sec('Where You Lost Marks',`<div class="implist">${weakItems}</div>`);
+
+  // Sec 4: Communication & Interview Behavior
+  const sec4=r.communication_feedback?sec('Communication & Interview Behavior',`<div class="btext">${esc(r.communication_feedback)}</div>`):'';
+
+  // Sec 5: Learning Plan
+  const lpItems=(r.learning_plan||[]).map(lp=>`
+    <div class="resi">
+      <div class="resn"><strong>${esc(lp.topic||'')}</strong></div>
+      <div class="resw">${esc(lp.action||'')}${lp.timeline?' ('+esc(lp.timeline)+')':''}</div>
+      ${lp.resource?`<div class="resa">&#128218; ${esc(lp.resource)}</div>`:''}
     </div>`).join('');
-  const sec4=sec('Areas for Improvement',`<div class="implist">${impItems}</div>`);
+  const sec5=lpItems?sec('Learning Plan',`<div class="reslist">${lpItems}</div>`):'';
 
-  // Sec 5: Behavioral
-  const sec5=r.behavioral_feedback?sec('Behavioral Feedback',`<div class="btext">${esc(r.behavioral_feedback)}</div>`):'';
+  // Sec 6: Roadmap
+  const rmItems=(r.readiness_roadmap||[]).map(m=>`
+    <div class="rmi">
+      <div class="rmw">${esc(m.milestone||m.week||'')}</div>
+      <div><div class="rmg">${esc(m.goal||m.focus||'')}</div></div>
+    </div>`).join('');
+  const sec6=rmItems?sec('Readiness Roadmap',`<div class="rmlist">${rmItems}</div>`):'';
 
-  // Smooth talker
-  const stDet=r.smooth_talker_detected;
-  const stSigs=(r.smooth_talker_signals||[]).map(s=>`<div style="font-size:13px;margin-top:5px;padding-left:10px">&#8226; ${esc(s)}</div>`).join('');
-  const sec5b=sec('Smooth Talker Assessment',`
-    <div class="stbox ${stDet?'detected':'clean'}">
-      <strong style="font-size:14px">${stDet?'Smooth Talker Pattern Detected':'No Smooth Talker Pattern Detected'}</strong>
-      <div style="font-size:13px;margin-top:6px">${esc(r.smooth_talker_assessment||'')}</div>
-      ${stSigs}
-    </div>`);
+  // Sec 7: Next Mock
+  const sec7=sec('Next Mock Guidance',`<div class="next-mock">${esc(r.next_mock_recommendation||'')}</div>`);
 
-  // Recovery velocity
-  const recEvents=(r.recovery_events||[]).map(e=>`<div style="font-size:13px;color:var(--g600);margin-top:4px">&#8226; ${esc(e)}</div>`).join('');
-  const sec5c=sec('Recovery Velocity',`
-    <div class="btext">${esc(r.recovery_velocity_feedback||'No recovery events in this session.')}</div>
-    ${recEvents}`);
+  // Sec 8: Mentor Note
+  const sec8=r.mentor_note?sec('Mentor Note',`<div class="btext" style="border-left-color:var(--gr)">${esc(r.mentor_note)}</div>`):'';
 
-  // Contradiction results
-  const contRows=(r.contradiction_results||[]).map(c=>`
-    <tr>
-      <td>${esc(c.topic)}</td>
-      <td>${c.angle1_score||'N/A'}/10</td>
-      <td class="${c.inconsistent?'inconsistent':'consistent'}">${c.inconsistent?'Inconsistent &#9888;':'Consistent &#10003;'}</td>
-    </tr>`).join('');
-  const secCont=contRows?sec('Contradiction Check Results',`
-    <table class="ctable">
-      <thead><tr><th>Topic</th><th>First Answer Score</th><th>Consistency</th></tr></thead>
-      <tbody>${contRows}</tbody>
-    </table>`):'';
-
-  // Notable moments
+  // Notable moments (kept from system data)
   const nmItems=(r.notable_moments||[]).map(m=>`
     <div class="nmi ${m.moment_type||'positive_signal'}">
       <div class="nmt">${m.moment_type==='positive_signal'?'&#10003;':'&#9888;'} Turn ${m.turn}</div>
@@ -1074,52 +1062,14 @@ function renderReport(r) {
     </div>`).join('');
   const secNM=nmItems?sec('Notable Moments',`<div class="nmlist">${nmItems}</div>`):'';
 
-  // Sec 6: Resources
-  const resItems=(r.recommended_resources||[]).map(res=>`
-    <div class="resi">
-      <div class="resn">&#128218; ${esc(res.resource||res)}</div>
-      ${res.why?`<div class="resw">${esc(res.why)}</div>`:''}
-      ${res.action?`<div class="resa">&#9654; ${esc(res.action)}</div>`:''}
-    </div>`).join('');
-  const sec6=resItems?sec('Recommended Resources',`<div class="reslist">${resItems}</div>`):'';
-
-  // Sec 7: Roadmap
-  const rmItems=(r.readiness_roadmap||[]).map(m=>`
-    <div class="rmi">
-      <div class="rmw">${esc(m.milestone||m.week||'')}</div>
-      <div><div class="rmg">${esc(m.goal||m.focus||'')}</div><div class="rma">${esc(m.action||'')}</div></div>
-    </div>`).join('');
-  const sec7=rmItems?sec('Readiness Roadmap',`<div class="rmlist">${rmItems}</div>`):'';
-
-  // Sec 8: Next mock
-  const sec8=sec('Next Mock Recommendation',`<div class="next-mock">${esc(r.next_mock_recommendation||'')}</div>`);
-
-  // Integrity
-  const il=r.integrity_level||'clean';
-  const ititle={
-    clean:'No Integrity Concerns Detected',
-    low_risk:'Low Risk — Minor Signals Noted',
-    moderate_risk:'Moderate Risk — Review Recommended',
-    high_risk:'High Risk — Score Capped at 60'
-  }[il]||il;
-  const iflags=(r.integrity_flags||[]).map(f=>`<div class="iflag">&#8226; ${esc(f)}</div>`).join('');
-  const secInt=sec('Integrity Assessment',`
-    <div class="ibox ${il}">
-      <div class="ititle">${ititle}</div>
-      <div style="font-size:13px;margin-top:4px;opacity:.7">${r.signal_count||0} total signals | Suspicion score: ${r.suspicion_score||0}/100</div>
-      ${iflags||'<div style="font-size:13px;color:var(--gr);margin-top:8px">No suspicious signals detected.</div>'}
-    </div>`);
-
   document.getElementById('rbody').innerHTML=`
     <div class="rhead">
       <div class="rtitle">Your <span>Performance Report</span></div>
       <div class="rsub">Mock Interview — ${new Date().toLocaleDateString()}</div>
     </div>
-    ${critBanner}
     ${scoreGrid}
     ${metaRow}
-    ${sec1}${sec2}${secTopic}${sec3}${sec4}${sec5}${sec5b}${sec5c}
-    ${secCont}${secNM}${sec6}${sec7}${sec8}${secInt}
+    ${sec1}${secTopic}${sec2}${sec3}${sec4}${sec5}${sec6}${sec7}${sec8}${secNM}
     <div class="dlrow">
       <button class="btn btn-p" onclick="dlReport()">Download Report</button>
       <button class="btn btn-s" onclick="window.location.reload()">Take Another Mock</button>
