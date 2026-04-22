@@ -542,6 +542,102 @@
         });
     })();
 
+    // ════════════════════════════════════════════════════════════
+    // CAMERA PRESENCE DETECTION — warn if candidate leaves camera
+    // ════════════════════════════════════════════════════════════
+    (function initCameraPresenceDetection() {
+        const video = document.getElementById('cam-video');
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 64;  // Small — just need pixel data, not high res
+        canvas.height = 48;
+
+        let prevFrame = null;
+        let noMovementCount = 0;
+        let cameraWarnings = 0;
+        const CHECK_INTERVAL = 2000;      // Check every 2 seconds
+        const MOVEMENT_THRESHOLD = 5;     // Min pixel difference to count as movement
+        const NO_MOVEMENT_LIMIT = 4;      // 4 checks (8 seconds) with no movement = warning
+
+        // Warning overlay for camera
+        const camWarningOverlay = document.createElement('div');
+        camWarningOverlay.id = 'cam-warning-overlay';
+        camWarningOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
+        camWarningOverlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="font-size:40px;margin-bottom:12px;">&#128247;</div>
+                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Please Stay in Front of the Camera</div>
+                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+                    We could not detect your presence on camera.<br>
+                    Please make sure you are visible and well-lit.<br>
+                    <strong>Continued absence will end the interview.</strong>
+                </div>
+                <button id="cam-warning-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+                    I'm Here — Continue
+                </button>
+            </div>`;
+        document.body.appendChild(camWarningOverlay);
+        document.getElementById('cam-warning-btn').addEventListener('click', () => {
+            camWarningOverlay.style.display = 'none';
+            noMovementCount = 0;  // Reset after acknowledgment
+        });
+
+        function getFrameData() {
+            try {
+                if (!video.srcObject || video.readyState < 2) return null;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            } catch(e) {
+                return null;
+            }
+        }
+
+        function compareFrames(current, previous) {
+            if (!current || !previous || current.length !== previous.length) return 999;
+            let diff = 0;
+            // Sample every 16th pixel (R channel only) for speed
+            for (let i = 0; i < current.length; i += 64) {
+                diff += Math.abs(current[i] - previous[i]);
+            }
+            return diff / (current.length / 64);
+        }
+
+        setInterval(() => {
+            if (!sessionOn || interviewEnded) return;
+
+            const currentFrame = getFrameData();
+            if (!currentFrame) return;
+
+            if (prevFrame) {
+                const movement = compareFrames(currentFrame, prevFrame);
+
+                if (movement < MOVEMENT_THRESHOLD) {
+                    noMovementCount++;
+
+                    if (noMovementCount >= NO_MOVEMENT_LIMIT) {
+                        cameraWarnings++;
+                        sendAntiCheat('camera_absence', `warnings:${cameraWarnings},no_movement:${noMovementCount}`);
+
+                        if (cameraWarnings === 1) {
+                            // First warning — show popup
+                            camWarningOverlay.style.display = 'flex';
+                        } else if (cameraWarnings >= 2) {
+                            // Second warning — end interview
+                            camWarningOverlay.style.display = 'none';
+                            sendAntiCheat('camera_absence_termination', `left_camera_${cameraWarnings}_times`);
+                            endSessionWithMessage('Interview ended — candidate not detected on camera.');
+                        }
+                        noMovementCount = 0;  // Reset counter after action
+                    }
+                } else {
+                    noMovementCount = 0;  // Reset on movement detected
+                }
+            }
+
+            prevFrame = currentFrame;
+        }, CHECK_INTERVAL);
+    })();
+
     function updateQuestionCount(n) {
         document.getElementById('d-qnum').textContent = n + ' questions';
         document.getElementById('q-num-label').textContent = 'Q' + n;
