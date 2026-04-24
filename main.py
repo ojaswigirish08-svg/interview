@@ -973,9 +973,15 @@ def build_system_prompt(session: dict, forced_type: str, extra: dict = None) -> 
     last_answer_summary = ""
     if session.get("history") and session["history"][-1].get("answer"):
         last_a = session["history"][-1]
+        last_eval = last_a.get("evaluation") or {}
+        last_accuracy = last_eval.get("accuracy", "")
         last_answer_summary = f"- Last answer quality: {last_eval_quality} | Confidence: {last_confidence}"
-        if (last_a.get("evaluation") or {}).get("notes"):
-            last_answer_summary += f"\n- Evaluator note: {last_a['evaluation']['notes']}"
+        if last_eval.get("notes"):
+            last_answer_summary += f"\n- Evaluator note: {last_eval['notes']}"
+        # Off-topic flag — interviewer must address this
+        if last_accuracy == "off_topic":
+            off_count = session.get("off_topic_count", 0)
+            last_answer_summary += f"\n- CRITICAL: Last answer was OFF-TOPIC ({off_count} consecutive). You MUST start your next question by briefly telling the candidate their previous answer was not relevant to the question, then re-ask the same topic in a simpler way. Example: 'That answer wasn't quite related to what I asked. Let me rephrase --'"
 
     # Level-calibrated complexity guide
     level_guide = {
@@ -1167,22 +1173,25 @@ QUESTION ({question_type}, {difficulty}): {question}
 ANSWER: {answer}
 
 EVALUATION RULES:
-- INTELLECTUAL HONESTY: "I don't know" = quality "honest_admission", score 6/10, warm response. "I don't know + reasoning" = 8/10.
-- POOR ARTICULATION: correct terms but incomplete = quality "poor_articulation".
+- OFF-TOPIC: If the answer is completely unrelated to the question asked (e.g., talking about cooking when asked about STA), set accuracy="off_topic", quality="weak", score=1. The answer must at least attempt to address the question's domain.
+- INTELLECTUAL HONESTY: "I don't know" = quality "honest_admission", score 6/10. "I don't know + reasoning" = 8/10.
+- POOR ARTICULATION: correct terms but incomplete explanation = quality "poor_articulation".
 - UNCONVENTIONAL ANSWER: if technically defensible, score defensibility not format. Set accuracy="correct".
 - PARTIAL ANSWER: If question has multiple expected points and candidate answers only some, set accuracy="partial" and list expected_points and missing_points.
+- NUMERICAL CHECK: If question asked for numbers/units and candidate gave none, note "missing_numerical" in notes.
+- GAP CLASSIFICATION: In notes, tag one of: [concept_gap] candidate doesn't know, [articulation_gap] knows but can't express, [behavioral] attitude/tone issue, [none] answer was adequate or strong.
 
 RETURN ONLY VALID JSON:
 {{
   "quality": "strong|adequate|weak|honest_admission|poor_articulation",
-  "accuracy": "correct|partial|wrong|not_applicable",
+  "accuracy": "correct|partial|wrong|off_topic|not_applicable",
   "confidence_level": "high|medium|low",
   "quadrant": "genuine_expert|genuine_nervous|dangerous_fake|honest_confused",
   "expected_points": ["point 1", "point 2", "point 3"],
   "missing_points": ["points the candidate missed"],
   "score": 5,
   "score_reasoning": "one sentence",
-  "notes": "specific observation"
+  "notes": "specific observation with gap tag"
 }}"""
 
 
@@ -1497,6 +1506,7 @@ def synthesize_speech_lmnt(text: str) -> str:
             "voice": LMNT_VOICE_ID,
             "text": text[:1500],
             "format": "mp3",
+            "speed": 1.2,
         },
         timeout=15,
     )
@@ -2248,6 +2258,18 @@ async def submit_answer(data: AnswerSubmit):
         session["last_eval_quality"] = quality
         session["last_confidence"] = confidence
 
+        # Off-topic answer tracking
+        accuracy = eval_data.get("accuracy", "")
+        if accuracy == "off_topic":
+            session.setdefault("off_topic_count", 0)
+            session["off_topic_count"] += 1
+            print(f"[Interview] Off-topic answer #{session['off_topic_count']} at turn {session['turn']-1}")
+            record_notable(session, session["turn"] - 1,
+                current_entry["question"], data.answer, "concern_flag",
+                f"Off-topic answer at turn {session['turn']-1}: candidate did not address the question")
+        else:
+            session["off_topic_count"] = 0  # Reset on relevant answer
+
         # Answer complexity vs level check
         complexity = assess_answer_complexity(
             session, data.answer, score,
@@ -2356,6 +2378,28 @@ async def submit_answer(data: AnswerSubmit):
     session["last_topic"] = topic
     session["last_question_type"] = result["question_type"]
 
+    # Check off-topic early stop — 3 consecutive off-topic answers
+    off_topic_end = False
+    if session.get("off_topic_count", 0) >= 3 and session["phase"] == "interview":
+        off_topic_end = True
+        session["phase"] = "ended"
+        session["early_end_reason"] = "off_topic"
+        candidate_name = strip_initials(session["resume"].get("candidate_name", "Candidate"))
+        is_real = session.get("mode") == "real"
+        if is_real:
+            result["question"] = (
+                f"Thank you {candidate_name}. Your answers have not been addressing the questions asked. "
+                f"We'll end the interview here. Please review the topics discussed and try again when prepared."
+            )
+        else:
+            result["question"] = (
+                f"{candidate_name}, your last few answers were not related to the questions being asked. "
+                f"Let's stop here. I'd suggest reviewing the core {session['resume'].get('domain', 'VLSI').replace('_', ' ')} topics "
+                f"and coming back for another mock when you feel more prepared."
+            )
+        result["question_type"] = "farewell"
+        print(f"[Interview] Ending — {session['off_topic_count']} consecutive off-topic answers")
+
     # Check if candidate is struggling — early stop with polite message
     struggling_end = False
     if session["phase"] == "interview" and session["turn"] >= 8:
@@ -2430,6 +2474,7 @@ async def submit_answer(data: AnswerSubmit):
         technical_turns >= 20 or
         session["phase"] == "ended" or
         struggling_end or
+        off_topic_end or
         result.get("warmup_decision") == "end_not_ready"
     )
 
