@@ -480,6 +480,7 @@
         <span class="cam-pip-label">monitoring</span>
         <span class="cam-pip-dot" id="cam-dot"></span>
     </div>
+    <div id="face-status" style="position:absolute;bottom:0;left:0;right:0;padding:3px 6px;font-family:'DM Mono',monospace;font-size:8px;color:#fff;background:rgba(0,0,0,0.6);text-align:center;z-index:2;">loading...</div>
     <video id="cam-video" autoplay muted playsinline></video>
     <div class="cam-pip-placeholder" id="cam-placeholder">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -618,19 +619,27 @@
         });
 
         // Try loading BlazeFace
+        const faceStatus = document.getElementById('face-status');
         async function loadModel() {
             try {
                 if (typeof tf === 'undefined' || typeof blazeface === 'undefined') {
                     console.warn('[FaceDetection] TensorFlow.js or BlazeFace not loaded from CDN — using pixel-diff fallback');
+                    faceStatus.textContent = 'pixel-diff mode';
+                    faceStatus.style.color = '#f90';
                     return;
                 }
+                faceStatus.textContent = 'loading AI model...';
                 await tf.setBackend('webgl');
                 await tf.ready();
                 blazeModel = await blazeface.load();
                 useBlazeFace = true;
+                faceStatus.textContent = 'BlazeFace ready';
+                faceStatus.style.color = '#4f4';
                 console.log('[FaceDetection] BlazeFace model loaded successfully');
             } catch(e) {
                 console.warn('[FaceDetection] BlazeFace failed, using pixel-diff fallback:', e.message);
+                faceStatus.textContent = 'pixel-diff mode';
+                faceStatus.style.color = '#f90';
                 useBlazeFace = false;
             }
         }
@@ -734,7 +743,18 @@
             if (personPresent === null) { detecting = false; return; } // Skip if both failed
 
             // --- Face presence check ---
-            console.log(`[FaceCheck] present=${personPresent}, headTurned=${headTurned}, dir=${turnDirection}, method=${useBlazeFace?'blazeface':'pixel-diff'}`);
+            // Update visible status on camera PIP
+            if (personPresent && headTurned) {
+                faceStatus.textContent = 'head turned ' + turnDirection;
+                faceStatus.style.color = '#f44';
+            } else if (personPresent) {
+                faceStatus.textContent = 'face OK';
+                faceStatus.style.color = '#4f4';
+            } else {
+                faceStatus.textContent = 'no face!';
+                faceStatus.style.color = '#f44';
+            }
+
             if (personPresent) {
                 noFaceCount = 0;
             } else {
