@@ -4,10 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Interview Agent</title>
-    <!-- TensorFlow.js BlazeFace — lightweight face detection in browser -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.20.0/dist/tf-core.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.20.0/dist/tf-converter.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.20.0/dist/tf-backend-webgl.min.js"></script>
+    <!-- TensorFlow.js + BlazeFace — face detection + head pose in browser -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.1.0/dist/blazeface.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
@@ -557,14 +555,14 @@
         let noFaceCount = 0;
         let cameraWarnings = 0;
         let detecting = false;
-        const CHECK_INTERVAL = 2500;      // Check every 2.5 seconds
-        const NO_FACE_LIMIT = 2;          // 2 consecutive checks (5 seconds) = warning
+        const CHECK_INTERVAL = 1500;      // Check every 1.5 seconds
+        const NO_FACE_LIMIT = 2;          // 2 consecutive checks (3 seconds) = warning
 
         // Head turn detection state
         let headTurnCount = 0;            // Consecutive head-turn detections
         let headTurnWarnings = 0;         // Total warnings given
-        const HEAD_TURN_LIMIT = 2;        // 2 consecutive checks = 1 warning
-        const HEAD_TURN_RATIO = 0.6;      // Nose-to-eye ratio threshold for "turned away"
+        const HEAD_TURN_LIMIT = 2;        // 2 consecutive checks (3 seconds) = 1 warning
+        const HEAD_TURN_RATIO = 0.32;     // Nose-to-eye ratio threshold for "turned away"
 
         // Pixel-diff fallback state
         let prevFrame = null;
