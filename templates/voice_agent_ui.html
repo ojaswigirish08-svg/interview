@@ -560,6 +560,12 @@
         const CHECK_INTERVAL = 2500;      // Check every 2.5 seconds
         const NO_FACE_LIMIT = 2;          // 2 consecutive checks (5 seconds) = warning
 
+        // Head turn detection state
+        let headTurnCount = 0;            // Consecutive head-turn detections
+        let headTurnWarnings = 0;         // Total warnings given
+        const HEAD_TURN_LIMIT = 2;        // 2 consecutive checks = 1 warning
+        const HEAD_TURN_RATIO = 0.6;      // Nose-to-eye ratio threshold for "turned away"
+
         // Pixel-diff fallback state
         let prevFrame = null;
         const fallbackCanvas = document.createElement('canvas');
@@ -590,6 +596,29 @@
             noFaceCount = 0;
         });
 
+        // Warning overlay for head turning
+        const headTurnOverlay = document.createElement('div');
+        headTurnOverlay.id = 'head-turn-overlay';
+        headTurnOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
+        headTurnOverlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="font-size:40px;margin-bottom:12px;">&#128064;</div>
+                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Please Look at the Screen</div>
+                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+                    We detected that you are looking away from the screen.<br>
+                    Please face the camera and maintain eye contact during the interview.<br>
+                    <strong id="head-turn-warn-text">Warning <span id="head-turn-warn-num">1</span> of 2 — next time the interview will end.</strong>
+                </div>
+                <button id="head-turn-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+                    I'm Facing the Screen — Continue
+                </button>
+            </div>`;
+        document.body.appendChild(headTurnOverlay);
+        document.getElementById('head-turn-btn').addEventListener('click', () => {
+            headTurnOverlay.style.display = 'none';
+            headTurnCount = 0;
+        });
+
         // Try loading BlazeFace
         async function loadModel() {
             try {
@@ -609,11 +638,40 @@
         }
         loadModel();
 
-        // BlazeFace detection
+        // BlazeFace detection — returns { present, headTurned, direction }
         async function checkWithBlazeFace() {
             try {
                 const predictions = await blazeModel.estimateFaces(video, false);
-                return predictions.length > 0;
+                if (predictions.length === 0) {
+                    return { present: false, headTurned: false, direction: null };
+                }
+
+                const face = predictions[0];
+                // BlazeFace landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
+                const landmarks = face.landmarks;
+                if (landmarks && landmarks.length >= 3) {
+                    const rightEye = landmarks[0];
+                    const leftEye = landmarks[1];
+                    const nose = landmarks[2];
+
+                    // Calculate nose position relative to the midpoint between eyes
+                    const eyeMidX = (rightEye[0] + leftEye[0]) / 2;
+                    const eyeSpan = Math.abs(leftEye[0] - rightEye[0]);
+
+                    if (eyeSpan > 5) { // Avoid division issues with tiny values
+                        // How far nose is from eye midpoint, normalized by eye span
+                        const noseOffset = (nose[0] - eyeMidX) / eyeSpan;
+                        // noseOffset near 0 = looking straight, large positive/negative = turned
+                        const turned = Math.abs(noseOffset) > HEAD_TURN_RATIO;
+                        const direction = noseOffset > 0 ? 'right' : 'left';
+                        if (turned) {
+                            console.log(`[HeadPose] Head turned ${direction} (offset: ${noseOffset.toFixed(2)})`);
+                        }
+                        return { present: true, headTurned: turned, direction: turned ? direction : null };
+                    }
+                }
+
+                return { present: true, headTurned: false, direction: null };
             } catch(e) {
                 console.warn('[FaceDetection] BlazeFace error:', e.message);
                 return null; // null = detection failed, skip this check
@@ -658,18 +716,26 @@
 
             detecting = true;
             let personPresent = null;
+            let headTurned = false;
+            let turnDirection = null;
 
             if (useBlazeFace && blazeModel) {
-                personPresent = await checkWithBlazeFace();
+                const blazeResult = await checkWithBlazeFace();
+                if (blazeResult !== null) {
+                    personPresent = blazeResult.present;
+                    headTurned = blazeResult.headTurned;
+                    turnDirection = blazeResult.direction;
+                }
             }
 
-            // Fallback if BlazeFace didn't work
+            // Fallback if BlazeFace didn't work (pixel-diff can't detect head turns)
             if (personPresent === null) {
                 personPresent = checkWithPixelDiff();
             }
 
             if (personPresent === null) { detecting = false; return; } // Skip if both failed
 
+            // --- Face presence check ---
             if (personPresent) {
                 noFaceCount = 0;
             } else {
@@ -689,6 +755,39 @@
                     }
                     noFaceCount = 0;
                 }
+            }
+
+            // --- Head turn check (only when face is present and BlazeFace is active) ---
+            if (personPresent && headTurned) {
+                headTurnCount++;
+                console.log(`[HeadPose] Head turned ${turnDirection} (${headTurnCount}/${HEAD_TURN_LIMIT})`);
+
+                if (headTurnCount >= HEAD_TURN_LIMIT) {
+                    headTurnWarnings++;
+                    sendAntiCheat('head_turned', `warnings:${headTurnWarnings},direction:${turnDirection}`);
+
+                    if (headTurnWarnings <= 2) {
+                        // Show warning (1st and 2nd time)
+                        document.getElementById('head-turn-warn-num').textContent = headTurnWarnings;
+                        if (headTurnWarnings === 2) {
+                            document.getElementById('head-turn-warn-text').innerHTML =
+                                '<span style="color:#c44;font-weight:700;">Final warning — looking away again will end the interview.</span>';
+                        }
+                        headTurnOverlay.style.display = 'flex';
+                    }
+
+                    if (headTurnWarnings >= 3) {
+                        // 3rd time — end the interview
+                        headTurnOverlay.style.display = 'none';
+                        sendAntiCheat('head_turn_termination', `looked_away_${headTurnWarnings}_times`);
+                        endSessionWithMessage('Interview ended — you looked away from the screen repeatedly.');
+                    }
+
+                    headTurnCount = 0;
+                }
+            } else if (personPresent && !headTurned) {
+                // Reset consecutive count when looking straight
+                headTurnCount = 0;
             }
 
             detecting = false;

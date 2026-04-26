@@ -92,6 +92,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .ac-dom_overlay{border-color:var(--pu)}
 .ac-canary_triggered{border-color:var(--pu)}
 .ac-screen_share{border-color:var(--rd)}
+.ac-head_turned{border-color:var(--yl)}
+.ac-head_turn_termination{border-color:var(--rd)}
 .ac-type{font-size:11px;font-weight:700;font-family:'DM Mono',monospace;text-transform:uppercase}
 .ac-meta{font-size:12px;color:var(--g400);margin-top:3px}
 
@@ -328,6 +330,7 @@ function renderDashboard(d) {
     {key:'paste', label:'Paste Event', check: d.anticheat_log.some(e=>e.event_type==='paste_event')},
     {key:'dom_overlay', label:'DOM Overlay / Canary', check: d.anticheat_log.some(e=>['dom_overlay','canary_triggered'].includes(e.event_type))},
     {key:'screen_share', label:'Screen Share', check: d.anticheat_log.some(e=>e.event_type==='screen_share')},
+    {key:'head_turned', label:'Head Turned Away', check: d.anticheat_log.some(e=>e.event_type==='head_turned')},
     {key:'clean_speech', label:'Filler Words Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('suspiciously_clean_speech'))},
     {key:'pronoun', label:'Pronouns Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('personal_pronouns_vanished'))},
     {key:'pause_var', label:'Low Pause Variance', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('low_pause_variance'))},
