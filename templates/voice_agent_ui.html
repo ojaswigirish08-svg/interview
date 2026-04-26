@@ -645,10 +645,13 @@
         loadModel();
 
         // BlazeFace detection — returns { present, headTurned, direction }
-        // Logic: track baseline eye distance when looking straight.
-        // When head turns, eye span shrinks (one eye hides). If eye span drops
-        // below 50% of baseline = head turned.
-        let baselineEyeSpan = 0;
+        // Logic: Use THREE signals combined:
+        //   1. Face box width shrinks when head turns
+        //   2. Nose moves far from center of face box
+        //   3. Ear-to-ear span collapses
+        // Baseline built from first 5 straight-face detections.
+        let baselineFaceWidth = 0;
+        let baselineNoseCenter = 0;  // nose X offset from face center, normalized
         let baselineSamples = 0;
 
         async function checkWithBlazeFace() {
@@ -659,9 +662,8 @@
                 }
 
                 const face = predictions[0];
-                // BlazeFace landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
                 const landmarks = face.landmarks;
-                if (!landmarks || landmarks.length < 6) {
+                if (!landmarks || landmarks.length < 4) {
                     return { present: true, headTurned: false, direction: null };
                 }
 
@@ -669,42 +671,58 @@
                 const leftEye = landmarks[1];
                 const nose = landmarks[2];
 
-                // Eye-to-eye distance
-                const eyeSpan = Math.abs(leftEye[0] - rightEye[0]);
+                // Face bounding box
+                const faceLeft = face.topLeft[0];
+                const faceRight = face.bottomRight[0];
+                const faceWidth = Math.abs(faceRight - faceLeft);
+                const faceCenterX = (faceLeft + faceRight) / 2;
 
-                // Face bounding box width
-                const faceWidth = Math.abs(face.bottomRight[0] - face.topLeft[0]);
+                if (faceWidth < 15) {
+                    return { present: true, headTurned: false, direction: null };
+                }
 
-                // Build baseline from first 5 good detections (looking straight)
-                if (baselineSamples < 5 && eyeSpan > 10 && faceWidth > 20) {
-                    // Only add to baseline if eye span is reasonable relative to face
-                    const ratio = eyeSpan / faceWidth;
-                    if (ratio > 0.3) { // Likely looking straight
-                        baselineEyeSpan = baselineSamples === 0
-                            ? eyeSpan
-                            : (baselineEyeSpan * baselineSamples + eyeSpan) / (baselineSamples + 1);
+                // How far nose is from face box center (normalized by face width)
+                // 0 = perfectly centered, 0.5 = at edge of face box
+                const noseOffsetNorm = (nose[0] - faceCenterX) / faceWidth;
+
+                // Build baseline from first 5 detections
+                if (baselineSamples < 5) {
+                    if (Math.abs(noseOffsetNorm) < 0.15) { // Only when roughly centered
+                        baselineFaceWidth = baselineSamples === 0
+                            ? faceWidth
+                            : (baselineFaceWidth * baselineSamples + faceWidth) / (baselineSamples + 1);
                         baselineSamples++;
-                        console.log(`[HeadPose] Baseline sample ${baselineSamples}: eyeSpan=${eyeSpan.toFixed(1)}, avg=${baselineEyeSpan.toFixed(1)}`);
+                        console.log(`[HeadPose] Baseline ${baselineSamples}/5: faceW=${faceWidth.toFixed(1)}, avg=${baselineFaceWidth.toFixed(1)}, noseOff=${noseOffsetNorm.toFixed(3)}`);
                     }
                     return { present: true, headTurned: false, direction: null };
                 }
 
-                // Not enough baseline yet
-                if (baselineEyeSpan < 10) {
+                if (baselineFaceWidth < 15) {
                     return { present: true, headTurned: false, direction: null };
                 }
 
-                // Head turn detection: eye span drops below 50% of baseline
-                const spanRatio = eyeSpan / baselineEyeSpan;
-                const turned = spanRatio < 0.5;
+                // === HEAD TURN DETECTION (any ONE of these = turned) ===
 
-                // Determine direction using nose position relative to eye midpoint
+                // Signal 1: Face box width shrunk (head turned = face appears narrower)
+                const widthRatio = faceWidth / baselineFaceWidth;
+                const widthShrunk = widthRatio < 0.7;
+
+                // Signal 2: Nose far from center of face box (strongest signal)
+                const noseOff = Math.abs(noseOffsetNorm) > 0.12;
+
+                // Signal 3: Eyes very close together (compressed on one side)
+                const eyeSpan = Math.abs(leftEye[0] - rightEye[0]);
+                const eyeToFaceRatio = eyeSpan / faceWidth;
+                const eyesCompressed = eyeToFaceRatio < 0.25;
+
+                // Turned if nose is off-center AND (face narrowed OR eyes compressed)
+                const turned = noseOff && (widthShrunk || eyesCompressed);
+
                 let direction = null;
                 if (turned) {
-                    const eyeMidX = (rightEye[0] + leftEye[0]) / 2;
-                    // Nose shifts toward the visible eye when head turns
-                    direction = (nose[0] > eyeMidX) ? 'right' : 'left';
-                    console.log(`[HeadPose] Head turned ${direction} (eyeSpan=${eyeSpan.toFixed(1)}, baseline=${baselineEyeSpan.toFixed(1)}, ratio=${spanRatio.toFixed(2)})`);
+                    // Video is mirrored with CSS, so directions appear flipped
+                    direction = noseOffsetNorm > 0 ? 'right' : 'left';
+                    console.log(`[HeadPose] TURNED ${direction} | noseOff=${noseOffsetNorm.toFixed(3)} widthRatio=${widthRatio.toFixed(2)} eyeFaceRatio=${eyeToFaceRatio.toFixed(2)}`);
                 }
 
                 return { present: true, headTurned: turned, direction: direction };
@@ -774,13 +792,13 @@
             // --- Face presence check ---
             // Update visible status on camera PIP
             if (personPresent && headTurned) {
-                faceStatus.textContent = 'head turned ' + turnDirection;
+                faceStatus.textContent = 'HEAD TURNED ' + turnDirection + '!';
                 faceStatus.style.color = '#f44';
             } else if (personPresent) {
-                faceStatus.textContent = 'face OK';
-                faceStatus.style.color = '#4f4';
+                faceStatus.textContent = baselineSamples < 5 ? ('calibrating ' + baselineSamples + '/5') : 'face OK';
+                faceStatus.style.color = baselineSamples < 5 ? '#ff0' : '#4f4';
             } else {
-                faceStatus.textContent = 'no face!';
+                faceStatus.textContent = 'NO FACE!';
                 faceStatus.style.color = '#f44';
             }
 
