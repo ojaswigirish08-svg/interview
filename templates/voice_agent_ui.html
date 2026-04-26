@@ -562,7 +562,7 @@
         // Head turn detection state
         let headTurnCount = 0;
         let headTurnWarnings = 0;
-        const HEAD_TURN_LIMIT = 2;        // 2 consecutive checks (3 seconds) = 1 warning
+        const HEAD_TURN_LIMIT = 3;        // 3 consecutive checks (~4.5 seconds) = 1 warning
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null };
@@ -666,10 +666,10 @@
                     const nosePos = (noseTip.x - leftEdge.x) / faceWidth;
 
                     // Head turn: nose drifts from center
-                    // Looking straight: nosePos ~ 0.48-0.52
-                    // Turned left:  nosePos < 0.38
-                    // Turned right: nosePos > 0.62
-                    const turned = nosePos < 0.38 || nosePos > 0.62;
+                    // Looking straight: nosePos ~ 0.45-0.55
+                    // Turned left:  nosePos < 0.30
+                    // Turned right: nosePos > 0.70
+                    const turned = nosePos < 0.30 || nosePos > 0.70;
                     let direction = null;
                     if (turned) {
                         // CSS mirror flips left/right visually
