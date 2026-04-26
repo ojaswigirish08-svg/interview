@@ -736,6 +736,7 @@
             if (personPresent === null) { detecting = false; return; } // Skip if both failed
 
             // --- Face presence check ---
+            console.log(`[FaceCheck] present=${personPresent}, headTurned=${headTurned}, dir=${turnDirection}, method=${useBlazeFace?'blazeface':'pixel-diff'}`);
             if (personPresent) {
                 noFaceCount = 0;
             } else {
