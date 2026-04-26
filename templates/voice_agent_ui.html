@@ -563,7 +563,6 @@
         let headTurnCount = 0;            // Consecutive head-turn detections
         let headTurnWarnings = 0;         // Total warnings given
         const HEAD_TURN_LIMIT = 2;        // 2 consecutive checks (3 seconds) = 1 warning
-        const HEAD_TURN_RATIO = 0.32;     // Nose-to-eye ratio threshold for "turned away"
 
         // Pixel-diff fallback state
         let prevFrame = null;
@@ -646,6 +645,12 @@
         loadModel();
 
         // BlazeFace detection — returns { present, headTurned, direction }
+        // Logic: track baseline eye distance when looking straight.
+        // When head turns, eye span shrinks (one eye hides). If eye span drops
+        // below 50% of baseline = head turned.
+        let baselineEyeSpan = 0;
+        let baselineSamples = 0;
+
         async function checkWithBlazeFace() {
             try {
                 const predictions = await blazeModel.estimateFaces(video, false);
@@ -656,32 +661,56 @@
                 const face = predictions[0];
                 // BlazeFace landmarks: [rightEye, leftEye, nose, mouth, rightEar, leftEar]
                 const landmarks = face.landmarks;
-                if (landmarks && landmarks.length >= 3) {
-                    const rightEye = landmarks[0];
-                    const leftEye = landmarks[1];
-                    const nose = landmarks[2];
-
-                    // Calculate nose position relative to the midpoint between eyes
-                    const eyeMidX = (rightEye[0] + leftEye[0]) / 2;
-                    const eyeSpan = Math.abs(leftEye[0] - rightEye[0]);
-
-                    if (eyeSpan > 5) { // Avoid division issues with tiny values
-                        // How far nose is from eye midpoint, normalized by eye span
-                        const noseOffset = (nose[0] - eyeMidX) / eyeSpan;
-                        // noseOffset near 0 = looking straight, large positive/negative = turned
-                        const turned = Math.abs(noseOffset) > HEAD_TURN_RATIO;
-                        const direction = noseOffset > 0 ? 'right' : 'left';
-                        if (turned) {
-                            console.log(`[HeadPose] Head turned ${direction} (offset: ${noseOffset.toFixed(2)})`);
-                        }
-                        return { present: true, headTurned: turned, direction: turned ? direction : null };
-                    }
+                if (!landmarks || landmarks.length < 6) {
+                    return { present: true, headTurned: false, direction: null };
                 }
 
-                return { present: true, headTurned: false, direction: null };
+                const rightEye = landmarks[0];
+                const leftEye = landmarks[1];
+                const nose = landmarks[2];
+
+                // Eye-to-eye distance
+                const eyeSpan = Math.abs(leftEye[0] - rightEye[0]);
+
+                // Face bounding box width
+                const faceWidth = Math.abs(face.bottomRight[0] - face.topLeft[0]);
+
+                // Build baseline from first 5 good detections (looking straight)
+                if (baselineSamples < 5 && eyeSpan > 10 && faceWidth > 20) {
+                    // Only add to baseline if eye span is reasonable relative to face
+                    const ratio = eyeSpan / faceWidth;
+                    if (ratio > 0.3) { // Likely looking straight
+                        baselineEyeSpan = baselineSamples === 0
+                            ? eyeSpan
+                            : (baselineEyeSpan * baselineSamples + eyeSpan) / (baselineSamples + 1);
+                        baselineSamples++;
+                        console.log(`[HeadPose] Baseline sample ${baselineSamples}: eyeSpan=${eyeSpan.toFixed(1)}, avg=${baselineEyeSpan.toFixed(1)}`);
+                    }
+                    return { present: true, headTurned: false, direction: null };
+                }
+
+                // Not enough baseline yet
+                if (baselineEyeSpan < 10) {
+                    return { present: true, headTurned: false, direction: null };
+                }
+
+                // Head turn detection: eye span drops below 50% of baseline
+                const spanRatio = eyeSpan / baselineEyeSpan;
+                const turned = spanRatio < 0.5;
+
+                // Determine direction using nose position relative to eye midpoint
+                let direction = null;
+                if (turned) {
+                    const eyeMidX = (rightEye[0] + leftEye[0]) / 2;
+                    // Nose shifts toward the visible eye when head turns
+                    direction = (nose[0] > eyeMidX) ? 'right' : 'left';
+                    console.log(`[HeadPose] Head turned ${direction} (eyeSpan=${eyeSpan.toFixed(1)}, baseline=${baselineEyeSpan.toFixed(1)}, ratio=${spanRatio.toFixed(2)})`);
+                }
+
+                return { present: true, headTurned: turned, direction: direction };
             } catch(e) {
                 console.warn('[FaceDetection] BlazeFace error:', e.message);
-                return null; // null = detection failed, skip this check
+                return null;
             }
         }
 
