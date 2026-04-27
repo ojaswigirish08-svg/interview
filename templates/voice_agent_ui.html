@@ -564,8 +564,13 @@
         let headTurnWarnings = 0;
         const HEAD_TURN_LIMIT = 3;        // 3 consecutive checks (~4.5 seconds) = 1 warning
 
+        // Eye reading detection state
+        let eyeReadCount = 0;
+        let eyeReadWarnings = 0;
+        const EYE_READ_LIMIT = 4;         // 4 consecutive checks (~6 seconds) = 1 warning
+
         // Latest detection result (set by MediaPipe callback)
-        let latestResult = { present: false, headTurned: false, direction: null };
+        let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
 
         // Warning overlay for camera (face not detected)
         const camWarningOverlay = document.createElement('div');
@@ -613,6 +618,29 @@
             headTurnCount = 0;
         });
 
+        // Warning overlay for eye reading
+        const eyeReadOverlay = document.createElement('div');
+        eyeReadOverlay.id = 'eye-read-overlay';
+        eyeReadOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
+        eyeReadOverlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="font-size:40px;margin-bottom:12px;">&#128065;</div>
+                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Eyes Off Screen Detected</div>
+                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+                    Your eyes appear to be reading something off-screen.<br>
+                    Please focus on the camera during the interview.<br>
+                    <strong id="eye-read-warn-text">Warning <span id="eye-read-warn-num">1</span> of 2 — next time the interview will end.</strong>
+                </div>
+                <button id="eye-read-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+                    I Understand — Continue
+                </button>
+            </div>`;
+        document.body.appendChild(eyeReadOverlay);
+        document.getElementById('eye-read-btn').addEventListener('click', () => {
+            eyeReadOverlay.style.display = 'none';
+            eyeReadCount = 0;
+        });
+
         // ── Load MediaPipe Face Mesh ──
         async function loadModel() {
             try {
@@ -630,53 +658,92 @@
 
                 faceMesh.setOptions({
                     maxNumFaces: 1,
-                    refineLandmarks: false,
+                    refineLandmarks: true,       // Enable iris landmarks (468-477)
                     minDetectionConfidence: 0.5,
                     minTrackingConfidence: 0.5
                 });
 
                 faceMesh.onResults((results) => {
                     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-                        latestResult = { present: false, headTurned: false, direction: null };
+                        latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
                         return;
                     }
 
                     const lm = results.multiFaceLandmarks[0];
 
+                    // ── HEAD TURN DETECTION ──
                     // Key landmarks (normalized 0-1):
                     // 1   = nose tip
-                    // 33  = left eye outer corner (camera left = person's right)
-                    // 263 = right eye outer corner (camera right = person's left)
                     // 234 = left face edge
                     // 454 = right face edge
                     const noseTip   = lm[1];
                     const leftEdge  = lm[234];
                     const rightEdge = lm[454];
-                    const leftEye   = lm[33];
-                    const rightEye  = lm[263];
 
                     const faceWidth = rightEdge.x - leftEdge.x;
 
                     if (faceWidth < 0.05) {
-                        latestResult = { present: true, headTurned: false, direction: null };
+                        latestResult = { present: true, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
                         return;
                     }
 
                     // Nose position within face: 0 = left edge, 1 = right edge, 0.5 = centered
                     const nosePos = (noseTip.x - leftEdge.x) / faceWidth;
 
-                    // Head turn: nose drifts from center
-                    // Looking straight: nosePos ~ 0.45-0.55
-                    // Turned left:  nosePos < 0.30
-                    // Turned right: nosePos > 0.70
                     const turned = nosePos < 0.30 || nosePos > 0.70;
                     let direction = null;
                     if (turned) {
-                        // CSS mirror flips left/right visually
-                        direction = nosePos < 0.38 ? 'left' : 'right';
+                        direction = nosePos < 0.30 ? 'left' : 'right';
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction };
+                    // ── EYE READING DETECTION (iris tracking) ──
+                    // Iris landmarks (refineLandmarks=true):
+                    //   468 = left iris center
+                    //   473 = right iris center
+                    // Eye corner landmarks:
+                    //   33  = left eye outer corner,  133 = left eye inner corner
+                    //   362 = right eye inner corner, 263 = right eye outer corner
+                    let eyeReading = false;
+                    let eyeDirection = null;
+
+                    if (lm.length > 473 && !turned) {  // Only check eyes if head is straight
+                        const leftIris     = lm[468];
+                        const leftEyeOuter = lm[33];
+                        const leftEyeInner = lm[133];
+
+                        const rightIris     = lm[473];
+                        const rightEyeInner = lm[362];
+                        const rightEyeOuter = lm[263];
+
+                        // Iris position within eye: 0 = outer corner, 1 = inner corner
+                        const leftEyeWidth = Math.abs(leftEyeInner.x - leftEyeOuter.x);
+                        const rightEyeWidth = Math.abs(rightEyeOuter.x - rightEyeInner.x);
+
+                        let leftGaze = 0.5;
+                        let rightGaze = 0.5;
+
+                        if (leftEyeWidth > 0.01) {
+                            leftGaze = (leftIris.x - leftEyeOuter.x) / leftEyeWidth;
+                        }
+                        if (rightEyeWidth > 0.01) {
+                            rightGaze = (rightIris.x - rightEyeInner.x) / rightEyeWidth;
+                        }
+
+                        // Average gaze of both eyes (more reliable)
+                        const avgGaze = (leftGaze + rightGaze) / 2;
+
+                        // Gaze thresholds:
+                        // ~0.5 = looking at screen (centered)
+                        // <0.25 = eyes looking left
+                        // >0.75 = eyes looking right
+                        if (avgGaze < 0.25 || avgGaze > 0.75) {
+                            eyeReading = true;
+                            eyeDirection = avgGaze < 0.25 ? 'left' : 'right';
+                            console.log(`[EyeGaze] Reading ${eyeDirection} | leftGaze=${leftGaze.toFixed(2)} rightGaze=${rightGaze.toFixed(2)} avg=${avgGaze.toFixed(2)}`);
+                        }
+                    }
+
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection };
                 });
 
                 mediapipeReady = true;
@@ -707,18 +774,21 @@
                 return;
             }
 
-            const { present, headTurned, direction } = latestResult;
+            const { present, headTurned, direction, eyeReading, eyeDirection } = latestResult;
 
             // Update visible status on camera PIP
-            if (present && headTurned) {
-                faceStatus.textContent = 'HEAD TURNED ' + direction + '!';
-                faceStatus.style.color = '#f44';
-            } else if (present) {
-                faceStatus.textContent = 'face OK';
-                faceStatus.style.color = '#4f4';
-            } else {
+            if (!present) {
                 faceStatus.textContent = 'NO FACE!';
                 faceStatus.style.color = '#f44';
+            } else if (headTurned) {
+                faceStatus.textContent = 'HEAD TURNED ' + direction + '!';
+                faceStatus.style.color = '#f44';
+            } else if (eyeReading) {
+                faceStatus.textContent = 'EYES ' + eyeDirection + '!';
+                faceStatus.style.color = '#fa0';
+            } else {
+                faceStatus.textContent = 'face OK';
+                faceStatus.style.color = '#4f4';
             }
 
             // --- Face presence check ---
@@ -771,6 +841,36 @@
                 }
             } else if (present && !headTurned) {
                 headTurnCount = 0;
+            }
+
+            // --- Eye reading check (only when head is straight) ---
+            if (present && !headTurned && eyeReading) {
+                eyeReadCount++;
+                console.log(`[EyeGaze] Eyes reading ${eyeDirection} (${eyeReadCount}/${EYE_READ_LIMIT})`);
+
+                if (eyeReadCount >= EYE_READ_LIMIT) {
+                    eyeReadWarnings++;
+                    sendAntiCheat('eye_reading', `warnings:${eyeReadWarnings},direction:${eyeDirection}`);
+
+                    if (eyeReadWarnings <= 2) {
+                        document.getElementById('eye-read-warn-num').textContent = eyeReadWarnings;
+                        if (eyeReadWarnings === 2) {
+                            document.getElementById('eye-read-warn-text').innerHTML =
+                                '<span style="color:#c44;font-weight:700;">Final warning — reading off-screen again will end the interview.</span>';
+                        }
+                        eyeReadOverlay.style.display = 'flex';
+                    }
+
+                    if (eyeReadWarnings >= 3) {
+                        eyeReadOverlay.style.display = 'none';
+                        sendAntiCheat('eye_reading_termination', `reading_${eyeReadWarnings}_times`);
+                        endSessionWithMessage('Interview ended — repeated off-screen reading detected.');
+                    }
+
+                    eyeReadCount = 0;
+                }
+            } else if (present && !eyeReading) {
+                eyeReadCount = 0;
             }
 
             detecting = false;

@@ -627,6 +627,7 @@ def count_active_signals(session: dict, scored_history: list) -> int:
     if any(e["event_type"] == "screen_share" for e in anticheat): count += 1
     if any(e["event_type"] == "canary_triggered" for e in anticheat): count += 1
     if any(e["event_type"] == "head_turned" for e in anticheat): count += 1
+    if any(e["event_type"] == "eye_reading" for e in anticheat): count += 1
 
     flags_all = []
     for h in scored_history:
@@ -739,6 +740,12 @@ def compute_suspicion_score(session: dict, scored_history: list) -> dict:
     if head_turn_events:
         suspicion += len(head_turn_events) * 8
         flags.append(f"Candidate looked away from screen {len(head_turn_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in head_turn_events[:3])})")
+
+    # Signal 4c: Eye reading — eyes looking off-screen while head faces camera (HIGH)
+    eye_read_events = [ev for ev in anticheat if ev["event_type"] == "eye_reading"]
+    if eye_read_events:
+        suspicion += len(eye_read_events) * 10
+        flags.append(f"Eyes reading off-screen {len(eye_read_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_read_events[:3])})")
 
     # Signal 5: Filler words vanished (HIGH)
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags", [])]
