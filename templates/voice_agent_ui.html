@@ -489,6 +489,11 @@
     </div>
 </div>
 
+<!-- Hidden canary for browser extension detection (Parakeet AI, etc.) -->
+<div id="canary-element" style="position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;left:-9999px;top:-9999px" data-vlsi-canary="interview-active">
+  This is an active interview question about Clock Tree Synthesis and timing closure in Physical Design.
+</div>
+
 <script>
     let sessionOn = false, secs = 0, qCount = 0, ticker = null, orbState = 'idle';
     let interviewEnded = false;  // Flag to completely stop interview
@@ -904,8 +909,9 @@
                 headTurnCount = 0;
             }
 
-            // --- Eye reading check (only when head is straight) ---
-            if (present && !headTurned && eyeReading) {
+            // --- Eye reading check (only when candidate is answering, not during AI speaking) ---
+            const isAnswering = orbState === 'listening' || isRecording;
+            if (present && !headTurned && eyeReading && isAnswering) {
                 eyeReadCount++;
                 console.log(`[EyeGaze] Eyes reading ${eyeDirection} (${eyeReadCount}/${EYE_READ_LIMIT})`);
 
@@ -934,8 +940,8 @@
                 eyeReadCount = 0;
             }
 
-            // --- Eye scanning check (reading pattern — only warns after repeated detections) ---
-            if (present && !headTurned && eyeScanning) {
+            // --- Eye scanning check (reading pattern — only when candidate is answering) ---
+            if (present && !headTurned && eyeScanning && isAnswering) {
                 eyeScanWarnings++;
                 sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},patterns:${scanPatternCount}`);
                 console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (after ${scanPatternCount} scan patterns)`);
@@ -1745,6 +1751,87 @@
             devToolsOpen = false;
         }
     }, 2000);
+
+    // 8. DOM overlay + Canary + AI extension detection (Parakeet AI, etc.)
+    (function setupOverlayDetection() {
+        const canary = document.getElementById('canary-element');
+        if (!canary || !window.MutationObserver) return;
+
+        const canaryOriginalText = canary.textContent;
+        let overlayWarnings = 0;
+
+        const observer = new MutationObserver(mutations => {
+            if (!sessionOn || interviewEnded) return;
+
+            for (const m of mutations) {
+                // Check new nodes added to page
+                for (const node of m.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    const st = window.getComputedStyle(node);
+                    const zIndex = parseInt(st.zIndex) || 0;
+
+                    // Detect fixed/absolute high-z overlays (AI answer popups)
+                    if ((st.position === 'fixed' || st.position === 'absolute') && zIndex > 1000 && node.id !== 'canary-element') {
+                        overlayWarnings++;
+                        const info = `z:${zIndex} tag:${node.tagName} class:${node.className?.substring(0,50)} id:${node.id}`;
+                        sendAntiCheat('dom_overlay', info);
+                        console.log(`[Anti-cheat] DOM overlay detected: ${info}`);
+
+                        // Check if overlay contains text (likely an AI answer)
+                        const text = (node.textContent || '').trim();
+                        if (text.length > 20) {
+                            sendAntiCheat('ai_answer_overlay', `chars:${text.length} preview:${text.substring(0,60)}`);
+                            console.log(`[Anti-cheat] AI answer overlay text detected (${text.length} chars)`);
+                        }
+
+                        // End interview after 2 overlay detections
+                        if (overlayWarnings >= 2) {
+                            sendAntiCheat('overlay_termination', `overlays:${overlayWarnings}`);
+                            endSessionWithMessage('Interview ended — unauthorized screen overlay detected.');
+                        }
+                    }
+                }
+
+                // Check if canary was modified (extension reading page content)
+                if (m.target === canary || canary.contains(m.target)) {
+                    if (canary.textContent !== canaryOriginalText) {
+                        sendAntiCheat('canary_triggered', 'canary_text_modified');
+                        console.log('[Anti-cheat] Canary element modified by external tool');
+                    }
+                }
+            }
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true
+        });
+
+        // Periodic scan for injected elements (catches extensions that inject before observer starts)
+        setInterval(() => {
+            if (!sessionOn || interviewEnded) return;
+
+            // Look for common AI tool overlay patterns
+            const suspiciousSelectors = [
+                '[class*="parakeet"]', '[class*="copilot"]', '[class*="ai-answer"]',
+                '[class*="gpt"]', '[class*="assistant"]', '[class*="overlay"]',
+                '[id*="parakeet"]', '[id*="copilot"]', '[id*="ai-"]',
+                'iframe[style*="z-index"]'
+            ];
+            for (const sel of suspiciousSelectors) {
+                try {
+                    const el = document.querySelector(sel);
+                    if (el && !el._flagged) {
+                        el._flagged = true;
+                        sendAntiCheat('ai_extension_detected', `selector:${sel} tag:${el.tagName}`);
+                        console.log(`[Anti-cheat] AI extension element found: ${sel}`);
+                    }
+                } catch(e) {}
+            }
+        }, 3000);
+    })();
 
     // Send anti-cheat event to server
     async function sendAntiCheat(eventType, metadata = '') {

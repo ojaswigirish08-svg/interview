@@ -673,6 +673,8 @@ def count_active_signals(session, scored_history):
     if any(e["event_type"]=="head_turned"     for e in anticheat): count += 1
     if any(e["event_type"]=="eye_reading"     for e in anticheat): count += 1
     if any(e["event_type"]=="eye_scanning"    for e in anticheat): count += 1
+    if any(e["event_type"]=="ai_answer_overlay" for e in anticheat): count += 1
+    if any(e["event_type"]=="ai_extension_detected" for e in anticheat): count += 1
     flags_all = []
     for h in scored_history: flags_all.extend(h.get("behavioral_flags",[]))
     if "suspiciously_clean_speech"   in flags_all: count += 1
@@ -734,6 +736,16 @@ def compute_suspicion_score(session, scored_history):
     if eye_scan_events:
         suspicion += len(eye_scan_events) * 15
         flags.append(f"Eyes scanning left-right reading pattern {len(eye_scan_events)} time(s) — likely reading text on screen (turns {', '.join(str(ev['turn']) for ev in eye_scan_events[:3])})")
+    # AI answer overlay detected on screen (VERY HIGH — direct evidence of cheating tool)
+    ai_overlay_events = [ev for ev in anticheat if ev["event_type"]=="ai_answer_overlay"]
+    if ai_overlay_events:
+        suspicion += len(ai_overlay_events) * 25
+        flags.append(f"AI answer overlay detected on screen {len(ai_overlay_events)} time(s) — cheating tool active")
+    # AI extension detected (HIGH)
+    ai_ext_events = [ev for ev in anticheat if ev["event_type"]=="ai_extension_detected"]
+    if ai_ext_events:
+        suspicion += len(ai_ext_events) * 20
+        flags.append(f"AI browser extension detected (e.g. Parakeet, Copilot)")
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags",[])]
     if len(clean_turns)>=3: suspicion+=len(clean_turns)*8; flags.append(f"Filler words vanished in {len(clean_turns)} answers")
     pronoun_turns = [h for h in scored_history if "personal_pronouns_vanished" in h.get("behavioral_flags",[])]
