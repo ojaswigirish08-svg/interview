@@ -696,7 +696,7 @@
 
                 faceMesh.onResults((results) => {
                     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-                        latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
+                        latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: -1, eyeScanning: false };
                         return;
                     }
 
@@ -714,7 +714,7 @@
                     const faceWidth = rightEdge.x - leftEdge.x;
 
                     if (faceWidth < 0.05) {
-                        latestResult = { present: true, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
+                        latestResult = { present: true, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: -1, eyeScanning: false };
                         return;
                     }
 
@@ -845,9 +845,9 @@
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
                 faceStatus.style.color = '#fa0';
             } else {
-                // Show live gaze value so we can verify detection
+                // Show live gaze value — gazeX is -1 when no face, 0.5 default when no iris
                 const gx = latestResult.gazeX;
-                const irisOk = gx !== 0.5 && typeof gx === 'number';
+                const irisOk = typeof gx === 'number' && gx >= 0 && gx <= 1;
                 faceStatus.textContent = irisOk ? ('gaze ' + gx.toFixed(2)) : 'face OK (no iris)';
                 faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
             }
