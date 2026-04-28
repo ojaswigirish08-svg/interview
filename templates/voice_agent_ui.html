@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Interview Agent</title>
-    <!-- MediaPipe Face Mesh — accurate face + head pose detection -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <!-- MediaPipe Face Mesh 0.4 — face + iris landmark detection -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap');
 
@@ -564,17 +564,17 @@
         let headTurnWarnings = 0;
         const HEAD_TURN_LIMIT = 3;        // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye looking away detection (static — eyes fixed off-screen)
+        // Eye looking away detection (eyes fixed left/right while head straight)
         let eyeReadCount = 0;
         let eyeReadWarnings = 0;
-        const EYE_READ_LIMIT = 4;         // 4 consecutive checks (~6 seconds) = 1 warning
+        const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye scanning detection (dynamic — eyes sweeping left↔right reading text)
-        let gazeHistory = [];              // Buffer of recent avgGaze values
-        const GAZE_HISTORY_SIZE = 8;       // Track last 8 checks (~12 seconds window)
-        let eyeScanCount = 0;
+        // Eye scanning detection (reading pattern — eyes sweep left→right repeatedly)
+        let gazeHistory = [];              // Rolling buffer of gaze X values
+        const GAZE_HISTORY_SIZE = 10;      // Track last 10 checks (~15 seconds)
+        let scanPatternCount = 0;          // How many times scanning pattern detected
         let eyeScanWarnings = 0;
-        const EYE_SCAN_LIMIT = 2;         // 2 consecutive scan detections = 1 warning
+        const SCAN_WARN_THRESHOLD = 3;     // Need 3 scan detections before warning (not just 1)
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
@@ -668,7 +668,7 @@
         document.body.appendChild(eyeScanOverlay);
         document.getElementById('eye-scan-btn').addEventListener('click', () => {
             eyeScanOverlay.style.display = 'none';
-            eyeScanCount = 0;
+            scanPatternCount = 0;
             gazeHistory = [];
         });
 
@@ -684,7 +684,7 @@
                 faceStatus.textContent = 'loading model...';
 
                 faceMesh = new FaceMesh({
-                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`
                 });
 
                 faceMesh.setOptions({
@@ -727,91 +727,78 @@
                         direction = nosePos < 0.30 ? 'left' : 'right';
                     }
 
-                    // ── EYE READING DETECTION (iris tracking) ──
+                    // ── EYE GAZE DETECTION (iris tracking) ──
+                    // Only when head is straight and iris landmarks available
                     let eyeReading = false;
                     let eyeDirection = null;
+                    let currentGaze = 0.5;
+                    let scanning = false;
 
-                    // Check if iris landmarks exist (refineLandmarks=true gives 478 points)
-                    const hasIris = lm[468] && lm[473] && lm[468].x !== undefined;
+                    try {
+                        // Iris landmarks: 468 = left iris center, 473 = right iris center
+                        // These only exist when refineLandmarks=true (478 total landmarks)
+                        if (!turned && lm[468] && lm[473]) {
+                            const liX = lm[468].x;  // left iris X
+                            const riX = lm[473].x;  // right iris X
 
-                    if (hasIris && !turned) {  // Only check eyes if head is straight and iris available
-                        const leftIris  = lm[468];   // left iris center
-                        const rightIris = lm[473];   // right iris center
+                            // Eye corners — get the horizontal extent of each eye
+                            // Left eye: 33 and 133 are the two corners
+                            // Right eye: 263 and 362 are the two corners
+                            const l1 = lm[33].x, l2 = lm[133].x;
+                            const r1 = lm[263].x, r2 = lm[362].x;
 
-                        // Use upper and lower eyelid + corners for more reliable eye boundary
-                        // Left eye:  landmarks 33 (outer corner) and 133 (inner corner)
-                        // Right eye: landmarks 362 (inner corner) and 263 (outer corner)
-                        // Plus vertical: 159 (left upper), 145 (left lower), 386 (right upper), 374 (right lower)
-                        const le33  = lm[33];
-                        const le133 = lm[133];
-                        const re263 = lm[263];
-                        const re362 = lm[362];
+                            const lMin = Math.min(l1, l2), lMax = Math.max(l1, l2);
+                            const rMin = Math.min(r1, r2), rMax = Math.max(r1, r2);
+                            const lW = lMax - lMin;
+                            const rW = rMax - rMin;
 
-                        // Get consistent left-to-right by actual X values
-                        const leftEyeMinX  = Math.min(le33.x, le133.x);
-                        const leftEyeMaxX  = Math.max(le33.x, le133.x);
-                        const rightEyeMinX = Math.min(re263.x, re362.x);
-                        const rightEyeMaxX = Math.max(re263.x, re362.x);
+                            if (lW > 0.002 && rW > 0.002) {
+                                // Where is iris within the eye? 0=left edge, 1=right edge
+                                let lG = Math.max(0, Math.min(1, (liX - lMin) / lW));
+                                let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
+                                currentGaze = (lG + rG) / 2;
 
-                        const leftEyeWidth  = leftEyeMaxX - leftEyeMinX;
-                        const rightEyeWidth = rightEyeMaxX - rightEyeMinX;
+                                // ── 1. EYES LOOKING AWAY (fixed gaze off-screen) ──
+                                if (currentGaze < 0.25 || currentGaze > 0.75) {
+                                    eyeReading = true;
+                                    eyeDirection = currentGaze < 0.25 ? 'left' : 'right';
+                                }
 
-                        let leftGaze = 0.5;
-                        let rightGaze = 0.5;
+                                // ── 2. READING PATTERN (left↔right sweep detection) ──
+                                gazeHistory.push(currentGaze);
+                                if (gazeHistory.length > GAZE_HISTORY_SIZE) gazeHistory.shift();
 
-                        if (leftEyeWidth > 0.003) {
-                            leftGaze = (leftIris.x - leftEyeMinX) / leftEyeWidth;
-                        }
-                        if (rightEyeWidth > 0.003) {
-                            rightGaze = (rightIris.x - rightEyeMinX) / rightEyeWidth;
-                        }
-
-                        leftGaze  = Math.max(0, Math.min(1, leftGaze));
-                        rightGaze = Math.max(0, Math.min(1, rightGaze));
-
-                        const avgGaze = (leftGaze + rightGaze) / 2;
-
-                        // Log every check so we can see values (remove after debugging)
-                        console.log(`[EyeGaze] L=${leftGaze.toFixed(3)} R=${rightGaze.toFixed(3)} avg=${avgGaze.toFixed(3)} | LW=${leftEyeWidth.toFixed(4)} RW=${rightEyeWidth.toFixed(4)} | iris L(${leftIris.x.toFixed(3)}) R(${rightIris.x.toFixed(3)})`);
-
-                        if (avgGaze < 0.25 || avgGaze > 0.75) {
-                            eyeReading = true;
-                            eyeDirection = avgGaze < 0.25 ? 'left' : 'right';
-                        }
-
-                        // ── Eye scanning detection (left↔right reading pattern) ──
-                        // Track gaze positions over time to detect sweeping eye movement
-                        gazeHistory.push(avgGaze);
-                        if (gazeHistory.length > GAZE_HISTORY_SIZE) {
-                            gazeHistory.shift();
-                        }
-
-                        // Detect scanning: count direction changes in the gaze buffer
-                        // Reading text = eyes sweep left→right, snap back, repeat
-                        // This creates frequent direction flips in gaze position
-                        var scanning = false;
-                        if (gazeHistory.length >= 5) {
-                            let dirChanges = 0;
-                            let totalMovement = 0;
-                            for (let i = 2; i < gazeHistory.length; i++) {
-                                const prev = gazeHistory[i-1] - gazeHistory[i-2];
-                                const curr = gazeHistory[i] - gazeHistory[i-1];
-                                totalMovement += Math.abs(curr);
-                                // Direction changed and movement was significant (not noise)
-                                if (prev * curr < 0 && Math.abs(curr) > 0.04) {
-                                    dirChanges++;
+                                // Need at least 6 data points (~9 seconds) to detect pattern
+                                if (gazeHistory.length >= 6) {
+                                    let dirChanges = 0;
+                                    let bigMoves = 0;
+                                    for (let i = 2; i < gazeHistory.length; i++) {
+                                        const d1 = gazeHistory[i-1] - gazeHistory[i-2];
+                                        const d2 = gazeHistory[i] - gazeHistory[i-1];
+                                        // Count significant direction reversals
+                                        if (d1 * d2 < 0 && Math.abs(d2) > 0.03) {
+                                            dirChanges++;
+                                        }
+                                        if (Math.abs(d2) > 0.05) bigMoves++;
+                                    }
+                                    // Reading pattern = 3+ direction changes + significant movement
+                                    if (dirChanges >= 3 && bigMoves >= 3) {
+                                        // Don't flag immediately — count occurrences
+                                        scanPatternCount++;
+                                        console.log(`[EyeGaze] Scan pattern #${scanPatternCount} | changes=${dirChanges} bigMoves=${bigMoves}`);
+                                        // Only set scanning=true after multiple detections
+                                        if (scanPatternCount >= SCAN_WARN_THRESHOLD) {
+                                            scanning = true;
+                                        }
+                                    }
                                 }
                             }
-                            // Scanning = 3+ direction changes AND enough total movement
-                            // (rules out small jittery noise — needs real left↔right sweeps)
-                            if (dirChanges >= 3 && totalMovement > 0.3) {
-                                scanning = true;
-                                console.log(`[EyeGaze] SCANNING detected | dirChanges=${dirChanges} movement=${totalMovement.toFixed(2)} history=[${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
-                            }
                         }
+                    } catch(e) {
+                        // Iris landmarks not available — skip eye detection silently
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: typeof avgGaze !== 'undefined' ? avgGaze : 0.5, eyeScanning: scanning || false };
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, eyeScanning: scanning };
                 });
 
                 mediapipeReady = true;
@@ -947,34 +934,30 @@
                 eyeReadCount = 0;
             }
 
-            // --- Eye scanning check (reading text pattern: left↔right sweeping) ---
+            // --- Eye scanning check (reading pattern — only warns after repeated detections) ---
             if (present && !headTurned && eyeScanning) {
-                eyeScanCount++;
-                console.log(`[EyeGaze] Scanning pattern (${eyeScanCount}/${EYE_SCAN_LIMIT})`);
+                eyeScanWarnings++;
+                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},patterns:${scanPatternCount}`);
+                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (after ${scanPatternCount} scan patterns)`);
 
-                if (eyeScanCount >= EYE_SCAN_LIMIT) {
-                    eyeScanWarnings++;
-                    sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings}`);
-
-                    if (eyeScanWarnings <= 2) {
-                        document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
-                        if (eyeScanWarnings === 2) {
-                            document.getElementById('eye-scan-warn-text').innerHTML =
-                                '<span style="color:#c44;font-weight:700;">Final warning — reading on screen again will end the interview.</span>';
-                        }
-                        eyeScanOverlay.style.display = 'flex';
+                if (eyeScanWarnings <= 2) {
+                    document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
+                    if (eyeScanWarnings === 2) {
+                        document.getElementById('eye-scan-warn-text').innerHTML =
+                            '<span style="color:#c44;font-weight:700;">Final warning — reading on screen again will end the interview.</span>';
                     }
-
-                    if (eyeScanWarnings >= 3) {
-                        eyeScanOverlay.style.display = 'none';
-                        sendAntiCheat('eye_scanning_termination', `scanning_${eyeScanWarnings}_times`);
-                        endSessionWithMessage('Interview ended — repeated on-screen reading pattern detected.');
-                    }
-
-                    eyeScanCount = 0;
+                    eyeScanOverlay.style.display = 'flex';
                 }
-            } else if (present && !eyeScanning) {
-                eyeScanCount = 0;
+
+                if (eyeScanWarnings >= 3) {
+                    eyeScanOverlay.style.display = 'none';
+                    sendAntiCheat('eye_scanning_termination', `scanning_${eyeScanWarnings}_times`);
+                    endSessionWithMessage('Interview ended — repeated on-screen reading pattern detected.');
+                }
+
+                // Reset pattern count so it needs to accumulate again for next warning
+                scanPatternCount = 0;
+                gazeHistory = [];
             }
 
             detecting = false;
