@@ -305,6 +305,25 @@ except ImportError:
 except Exception as e:
     print(f"Pocket TTS failed: {e}")
 
+# L2CS-Net gaze estimation (optional)
+gaze_pipeline = None
+try:
+    from l2cs import Pipeline
+    import torch, pathlib
+    _gaze_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    gaze_pipeline = Pipeline(
+        weights=pathlib.Path(__file__).parent / "models" / "L2CSNet_gaze360.pkl",
+        arch='ResNet50',
+        device=_gaze_device
+    )
+    print(f"L2CS-Net gaze estimation ready (device: {_gaze_device}).")
+except ImportError:
+    print("L2CS-Net not installed. pip install l2cs torch torchvision")
+except FileNotFoundError:
+    print("L2CS-Net weights not found. Download L2CSNet_gaze360.pkl to models/ folder.")
+except Exception as e:
+    print(f"L2CS-Net failed to load: {e}")
+
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -357,7 +376,6 @@ class AnswerSubmit(BaseModel):
     thinking_pause_sec: float = 0.0
     input_mode: str = "text"
     whisper_confidence: float = 1.0
-    eye_movement: dict = {}  # {total_movement, direction_changes, variance, samples, eyes_away_count, reading_likely}
 
 class AntiCheatEvent(BaseModel):
     session_id: str
@@ -917,62 +935,13 @@ RETURN ONLY VALID JSON (no markdown):
   "hint_text": "the hint if hint_given is true, otherwise null"
 }}"""
 
-def build_evaluation_prompt(session, question, answer, difficulty, question_type, eye_data=None):
+def build_evaluation_prompt(session, question, answer, difficulty, question_type):
     r = session["resume"]
-    eye_section = ""
-    if eye_data and eye_data.get("samples", 0) >= 3:
-        gaze_x = eye_data.get("gaze_pattern_x", [])
-        gaze_y = eye_data.get("gaze_pattern_y", [])
-        away_count = eye_data.get("eyes_away_count", 0)
-
-        eye_section = f"""
-EYE TRACKING DATA (recorded every 1.5 seconds while candidate answered):
-
-Horizontal gaze (X): {gaze_x}
-  0.0 = looking far left, 0.5 = center/camera, 1.0 = looking far right
-
-Vertical gaze (Y): {gaze_y}
-  Lower values = looking up, Higher values = looking down
-
-Times eyes looked away: {away_count}
-Samples: {len(gaze_x)}
-
-HOW TO DETECT READING:
-Reading text follows a specific pattern:
-1. X moves LEFT→RIGHT gradually (scanning across a line of text)
-2. X snaps back to LEFT suddenly (going to next line)
-3. Y moves slightly DOWNWARD over time (progressing through lines)
-4. Steps 1-3 REPEAT multiple times
-
-Example of READING pattern:
-  X: [0.38, 0.42, 0.48, 0.55, 0.36, 0.40, 0.47, 0.54, 0.35, 0.43]
-  Y: [0.510, 0.511, 0.512, 0.513, 0.515, 0.516, 0.517, 0.518, 0.520, 0.521]
-  → X sweeps right then snaps left (twice), Y consistently goes down = READING
-
-Example of NORMAL (thinking):
-  X: [0.48, 0.50, 0.47, 0.49, 0.51, 0.48]
-  Y: [0.512, 0.511, 0.513, 0.512, 0.511, 0.512]
-  → X stable near center, Y stable = NORMAL
-
-Example of LOOKING AWAY:
-  X: [0.50, 0.58, 0.65, 0.68, 0.70, 0.66]
-  Y: [0.512, 0.510, 0.510, 0.511, 0.510, 0.511]
-  → X drifts to one side and stays = LOOKING AWAY
-
-SCORING RULES:
-- READING pattern + perfect/detailed answer → add "eye_reading_suspected" to notes, reduce score by 2
-- READING pattern + weak/wrong answer → nervousness, do NOT penalize
-- LOOKING AWAY pattern → note it but don't change score
-- NORMAL pattern → ignore eye data, score normally
-- Add "eye_pattern": "normal" or "reading" or "looking_away" to your JSON response
-- NEVER mention eye tracking to the candidate"""
-
     return f"""You are a senior VLSI technical interviewer evaluating a candidate's answer.
 
 CANDIDATE: {r['domain'].replace('_',' ')} | {r['level'].replace('_',' ')} ({r.get('years_experience',0)} years)
 QUESTION ({question_type}, {difficulty}): {question}
 ANSWER: {answer}
-{eye_section}
 
 EVALUATION RULES:
 - "I don't know" = quality "honest_admission", score 6/10
@@ -990,14 +959,13 @@ RETURN ONLY VALID JSON:
   "missing_points": ["points candidate missed"],
   "score": 5,
   "score_reasoning": "one sentence",
-  "eye_pattern": "normal|reading|looking_away",
-  "notes": "specific observation including eye behavior if relevant"
+  "notes": "specific observation"
 }}"""
 
-def evaluate_answer_llm(session, question, answer, difficulty, question_type, eye_data=None):
+def evaluate_answer_llm(session, question, answer, difficulty, question_type):
     if not answer or question_type=="greeting": return None
     sid = session.get("id","unknown")
-    prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type, eye_data=eye_data)
+    prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type)
     return call_llm_json([{"role":"user","content":prompt}], temperature=0.3, max_tokens=500,
                          _session_id=sid, _step="LLM_evaluation")
 
@@ -1043,8 +1011,7 @@ def generate_question(session, candidate_answer=None):
     evaluation=None; result=None
     def _do_eval():
         le=session["history"][-1]
-        eye_data=le.get("eye_movement")
-        return evaluate_answer_llm(session,le.get("question",""),candidate_answer,le.get("difficulty","basic"),le.get("question_type",""),eye_data=eye_data)
+        return evaluate_answer_llm(session,le.get("question",""),candidate_answer,le.get("difficulty","basic"),le.get("question_type",""))
     def _do_qgen():
         return call_llm_json(messages, temperature=0.65, max_tokens=400, _session_id=sid, _step="LLM_question")
 
@@ -1470,7 +1437,6 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         current_entry["word_count"]=data.word_count; current_entry["thinking_pause_sec"]=data.thinking_pause_sec
         current_entry["input_mode"]=data.input_mode; current_entry["filler_rate"]=count_fillers(data.answer)
         current_entry["pronoun_rate"]=count_personal_pronouns(data.answer); current_entry["correction_rate"]=count_self_corrections(data.answer)
-        current_entry["eye_movement"]=data.eye_movement if data.eye_movement else {}
         dev=analyze_behavioral_deviation(session,data.answer,data.answer_duration_sec,data.word_count,data.thinking_pause_sec,data.input_mode,current_entry.get("difficulty","basic"))
         current_entry["behavioral_flags"]=dev["flags"]; current_entry["behavioral_deviation"]=dev["deviation_score"]
     if session["phase"]=="greeting":
@@ -1594,6 +1560,54 @@ async def end_session(data: dict):
     session["phase"] = "ended"
     return JSONResponse({"ok": True})
 
+@app.post("/api/gaze-check")
+async def gaze_check(file: UploadFile = File(...), session_id: str = Form("")):
+    """Receive a video frame, run L2CS-Net, return gaze angles."""
+    if not gaze_pipeline:
+        return JSONResponse({"error": "L2CS-Net not available", "yaw": 0, "pitch": 0, "looking": "unknown"})
+
+    import asyncio, cv2, numpy as np
+    img_bytes = await file.read()
+    if len(img_bytes) < 500:
+        return JSONResponse({"yaw": 0, "pitch": 0, "looking": "no_frame"})
+
+    def _run_gaze():
+        # Decode JPEG frame
+        arr = np.frombuffer(img_bytes, np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return {"yaw": 0, "pitch": 0, "looking": "decode_error"}
+
+        # Run L2CS-Net
+        results = gaze_pipeline.step(frame)
+
+        if results is None or len(results.yaw) == 0:
+            return {"yaw": 0, "pitch": 0, "looking": "no_face"}
+
+        # Get first face's gaze angles (in degrees)
+        yaw = float(results.yaw[0])     # left/right: negative=left, positive=right
+        pitch = float(results.pitch[0]) # up/down: negative=up, positive=down
+
+        # Classify gaze direction
+        if abs(yaw) < 10 and abs(pitch) < 10:
+            looking = "center"
+        elif yaw < -15:
+            looking = "left"
+        elif yaw > 15:
+            looking = "right"
+        elif pitch > 15:
+            looking = "down"
+        elif pitch < -15:
+            looking = "up"
+        else:
+            looking = "slight_off"
+
+        return {"yaw": round(yaw, 1), "pitch": round(pitch, 1), "looking": looking}
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _run_gaze)
+    return JSONResponse(result)
+
 @app.post("/api/anticheat-event")
 async def anticheat_event(data: AntiCheatEvent):
     session=sessions.get(data.session_id)
@@ -1704,7 +1718,7 @@ async def admin_session_detail(session_id: str, _=Depends(require_reviewer_or_ad
     turn_log=[]
     for h in history:
         eval_data=h.get("evaluation") or {}
-        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"eye_pattern":eval_data.get("eye_pattern",""),"eye_movement":h.get("eye_movement",{}),"notes":eval_data.get("notes","")})
+        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"notes":eval_data.get("notes","")})
     contradiction=session.get("contradiction_asked",{}); contradiction_log=[]
     for key,val in contradiction.items():
         if isinstance(val,str) and val in ("angle_1_asked","complete"):

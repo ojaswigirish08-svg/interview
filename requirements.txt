@@ -26,3 +26,6 @@ elevenlabs>=1.0.0
 # numpy
 
 # TTS (Mistral Voxtral — uses requests, no extra package)
+
+# Gaze estimation (optional — install separately if needed)
+# pip install l2cs torch torchvision Pillow

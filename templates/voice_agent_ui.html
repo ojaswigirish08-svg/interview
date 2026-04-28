@@ -574,12 +574,15 @@
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye reading detection (movement-based — reading = high eye activity)
-        let gazeHistory = [];              // Rolling buffer of gaze X values
-        const GAZE_HISTORY_SIZE = 12;      // Track last 12 checks (~18 seconds)
-        let readingFlagCount = 0;          // How many times high-movement detected
-        let eyeScanWarnings = 0;
-        const READING_FLAG_THRESHOLD = 3;  // Need 3 high-movement windows before warning
+        // L2CS-Net server-side gaze (more accurate than iris landmarks)
+        let l2csAvailable = false;
+        let l2csCheckCount = 0;
+        const L2CS_CHECK_EVERY = 2;       // Send frame every 2nd check (~3 seconds)
+        let l2csGaze = { yaw: 0, pitch: 0, looking: 'unknown' };
+        const gazeCanvas = document.createElement('canvas');
+        gazeCanvas.width = 320;
+        gazeCanvas.height = 240;
+        const gazeCtx = gazeCanvas.getContext('2d');
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
@@ -651,30 +654,6 @@
         document.getElementById('eye-read-btn').addEventListener('click', () => {
             eyeReadOverlay.style.display = 'none';
             eyeReadCount = 0;
-        });
-
-        // Warning overlay for eye scanning (reading text pattern)
-        const eyeScanOverlay = document.createElement('div');
-        eyeScanOverlay.id = 'eye-scan-overlay';
-        eyeScanOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
-        eyeScanOverlay.innerHTML = `
-            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
-                <div style="font-size:40px;margin-bottom:12px;">&#128214;</div>
-                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Reading Pattern Detected</div>
-                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                    Your eye movement suggests you are reading something on screen.<br>
-                    Please answer from your own knowledge without external help.<br>
-                    <strong id="eye-scan-warn-text">Warning <span id="eye-scan-warn-num">1</span> of 2 — next time the interview will end.</strong>
-                </div>
-                <button id="eye-scan-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
-                    I Understand — Continue
-                </button>
-            </div>`;
-        document.body.appendChild(eyeScanOverlay);
-        document.getElementById('eye-scan-btn').addEventListener('click', () => {
-            eyeScanOverlay.style.display = 'none';
-            readingFlagCount = 0;
-            gazeHistory = [];
         });
 
         // ── Load MediaPipe Face Mesh ──
@@ -757,87 +736,15 @@
                             const lW = lMax - lMin;
                             const rW = rMax - rMin;
 
-                            // Also get Y position of iris (for vertical tracking)
-                            const liY = lm[468].y;
-                            const riY = lm[473].y;
-
                             if (lW > 0.002 && rW > 0.002) {
-                                // Horizontal gaze: 0=left, 1=right
                                 let lG = Math.max(0, Math.min(1, (liX - lMin) / lW));
                                 let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
                                 currentGaze = (lG + rG) / 2;
 
-                                // Vertical gaze: use raw Y average (0=top, 1=bottom in normalized coords)
-                                const gazeY = (liY + riY) / 2;
-
-                                // ── 1. EYES LOOKING AWAY (fixed gaze off-screen) ──
+                                // Eyes looking away (fixed gaze off-screen)
                                 if (currentGaze < 0.35 || currentGaze > 0.65) {
                                     eyeReading = true;
                                     eyeDirection = currentGaze < 0.35 ? 'left' : 'right';
-                                }
-
-                                // ── 2. READING DETECTION (X: left→right + Y: downward) ──
-                                // Track both X and Y over time
-                                gazeHistory.push({ x: currentGaze, y: gazeY });
-                                if (gazeHistory.length > GAZE_HISTORY_SIZE) gazeHistory.shift();
-
-                                if (gazeHistory.length >= 6) {
-                                    // Detect reading pattern:
-                                    // Reading = eyes move left→right (X increases), then snap back left
-                                    //           AND eyes gradually move downward (Y increases)
-                                    //
-                                    // Line 1:  →→→→→  (X: 0.35 → 0.55)
-                                    //          ↓ snap back + down
-                                    // Line 2:  →→→→→  (X: 0.35 → 0.55)
-                                    //          ↓ snap back + down
-                                    // Line 3:  →→→→→
-
-                                    let xSnapBacks = 0;     // X goes right then snaps left (end of line)
-                                    let yDownward = 0;      // Y moves downward (next line)
-                                    let xRightMoves = 0;    // X moves rightward (reading along line)
-
-                                    for (let i = 1; i < gazeHistory.length; i++) {
-                                        const dx = gazeHistory[i].x - gazeHistory[i-1].x;
-                                        const dy = gazeHistory[i].y - gazeHistory[i-1].y;
-
-                                        // X moving right (reading along a line)
-                                        if (dx > 0.02) xRightMoves++;
-
-                                        // X snapping back left (going to next line)
-                                        if (dx < -0.03) xSnapBacks++;
-
-                                        // Y moving down (progressing through text)
-                                        if (dy > 0.002) yDownward++;
-                                    }
-
-                                    // Reading pattern confirmed when:
-                                    // - Multiple rightward X movements (reading lines)
-                                    // - At least 1 snap-back (went to next line)
-                                    // - Some downward Y movement (scrolling through text)
-                                    const isReadingPattern = xRightMoves >= 2 && xSnapBacks >= 1 && yDownward >= 1;
-
-                                    // Also check simple high movement as fallback
-                                    let totalXMovement = 0;
-                                    for (let i = 1; i < gazeHistory.length; i++) {
-                                        totalXMovement += Math.abs(gazeHistory[i].x - gazeHistory[i-1].x);
-                                    }
-                                    const highMovement = totalXMovement > 0.15;
-
-                                    const isReading = isReadingPattern || (highMovement && xSnapBacks >= 2);
-
-                                    if (isReading) {
-                                        readingFlagCount++;
-                                        console.log(`[EyeGaze] READING #${readingFlagCount} | rightMoves=${xRightMoves} snapBacks=${xSnapBacks} downward=${yDownward} xMove=${totalXMovement.toFixed(3)} | pattern=${isReadingPattern}`);
-
-                                        if (readingFlagCount >= READING_FLAG_THRESHOLD) {
-                                            scanning = true;
-                                            gazeHistory = [];
-                                        }
-                                    } else {
-                                        if (readingFlagCount > 0 && gazeHistory.length >= GAZE_HISTORY_SIZE) {
-                                            readingFlagCount = Math.max(0, readingFlagCount - 1);
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -845,7 +752,7 @@
                         // Iris landmarks not available — skip eye detection silently
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, gazeY: typeof gazeY !== 'undefined' ? gazeY : 0, eyeScanning: scanning };
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, eyeScanning: false };
                 });
 
                 mediapipeReady = true;
@@ -886,12 +793,6 @@
             } else if (headTurned) {
                 faceStatus.textContent = 'HEAD TURNED ' + direction + '!';
                 faceStatus.style.color = '#f44';
-            } else if (eyeScanning) {
-                faceStatus.textContent = 'READING DETECTED!';
-                faceStatus.style.color = '#f44';
-            } else if (present && !headTurned && readingFlagCount >= 1 && isAnswering) {
-                faceStatus.textContent = 'reading? ' + readingFlagCount + '/' + READING_FLAG_THRESHOLD;
-                faceStatus.style.color = '#fa0';
             } else if (eyeReading) {
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
                 faceStatus.style.color = '#fa0';
@@ -901,12 +802,6 @@
                 const irisOk = typeof gx === 'number' && gx >= 0 && gx <= 1;
                 faceStatus.textContent = irisOk ? ('gaze ' + gx.toFixed(2)) : 'face OK (no iris)';
                 faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
-            }
-
-            // --- Collect eye data during answering (sent to LLM with the answer) ---
-            if (isAnswering && present && latestResult.gazeX >= 0 && latestResult.gazeX <= 1) {
-                answerGazeData.push({ x: latestResult.gazeX, y: latestResult.gazeY || 0 });
-                if (eyeReading) answerEyeAwayCount++;
             }
 
             // --- Face presence check ---
@@ -991,30 +886,50 @@
                 eyeReadCount = 0;
             }
 
-            // --- Eye scanning check (sawtooth reading pattern — only when answering) ---
-            if (present && !headTurned && eyeScanning && isAnswering) {
-                eyeScanWarnings++;
-                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},flags:${readingFlagCount}`);
-                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (${readingFlagCount} movement flags)`);
-
-                if (eyeScanWarnings <= 2) {
-                    document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
-                    if (eyeScanWarnings === 2) {
-                        document.getElementById('eye-scan-warn-text').innerHTML =
-                            '<span style="color:#c44;font-weight:700;">Final warning — reading again will end the interview.</span>';
-                    }
-                    eyeScanOverlay.style.display = 'flex';
+            // --- L2CS-Net server-side gaze check (every 2nd cycle = ~3 seconds) ---
+            if (isAnswering && present && !headTurned) {
+                l2csCheckCount++;
+                if (l2csCheckCount >= L2CS_CHECK_EVERY) {
+                    l2csCheckCount = 0;
+                    // Capture frame and send to server (non-blocking)
+                    try {
+                        if (video.srcObject && video.readyState >= 2) {
+                            gazeCtx.drawImage(video, 0, 0, gazeCanvas.width, gazeCanvas.height);
+                            gazeCanvas.toBlob(async (blob) => {
+                                if (!blob || interviewEnded) return;
+                                try {
+                                    const form = new FormData();
+                                    form.append('file', blob, 'frame.jpg');
+                                    form.append('session_id', sessionId || '');
+                                    const resp = await fetch('/api/gaze-check', { method: 'POST', body: form });
+                                    const data = await resp.json();
+                                    if (data.looking !== 'unknown' && data.looking !== 'decode_error') {
+                                        l2csAvailable = true;
+                                        l2csGaze = data;
+                                        // Log gaze result
+                                        console.log(`[L2CS] yaw=${data.yaw}° pitch=${data.pitch}° → ${data.looking}`);
+                                        // Send anticheat if looking away significantly
+                                        if (data.looking === 'left' || data.looking === 'right' || data.looking === 'down') {
+                                            sendAntiCheat('l2cs_gaze_away', `yaw:${data.yaw},pitch:${data.pitch},looking:${data.looking}`);
+                                        }
+                                    }
+                                } catch(e) { /* server gaze not available — ignore */ }
+                            }, 'image/jpeg', 0.6);
+                        }
+                    } catch(e) {}
                 }
+            }
 
-                if (eyeScanWarnings >= 3) {
-                    eyeScanOverlay.style.display = 'none';
-                    sendAntiCheat('eye_scanning_termination', `scanning_${eyeScanWarnings}_times`);
-                    endSessionWithMessage('Interview ended — repeated reading pattern detected.');
+            // Update PIP status with L2CS data if available
+            if (l2csAvailable && isAnswering && present && !headTurned && !eyeReading) {
+                const g = l2csGaze;
+                if (g.looking === 'left' || g.looking === 'right' || g.looking === 'down') {
+                    faceStatus.textContent = `GAZE ${g.looking.toUpperCase()} (${g.yaw}°)`;
+                    faceStatus.style.color = '#fa0';
+                } else {
+                    faceStatus.textContent = `gaze OK (${g.yaw}°, ${g.pitch}°)`;
+                    faceStatus.style.color = '#4f4';
                 }
-
-                // Reset so it needs to accumulate again
-                readingFlagCount = 0;
-                gazeHistory = [];
             }
 
             detecting = false;
@@ -1137,9 +1052,6 @@
     const SILENCE_THRESHOLD = 15;
     const SILENCE_TIMEOUT = 2000;
 
-    // Eye tracking data per answer (reset when recording starts, sent with answer)
-    let answerGazeData = [];       // Gaze X values collected during this answer
-    let answerEyeAwayCount = 0;    // Times eyes looked away during this answer
 
     // Get session ID from URL params
     const urlParams = new URLSearchParams(window.location.search);
@@ -1464,9 +1376,6 @@
             speechDetected = false;
             silenceStart = null;
 
-            // Reset eye tracking for this answer
-            answerGazeData = [];
-            answerEyeAwayCount = 0;
 
             setOrb('listening');
             document.getElementById('status-txt').textContent = 'listening';
@@ -1570,18 +1479,7 @@
 
             document.getElementById('sub-label').textContent = 'sending answer...';
 
-            // Send raw gaze pattern (X + Y) to LLM — let it decide if user is reading
-            let eyeSummary = { gaze_pattern_x: [], gaze_pattern_y: [], samples: 0, eyes_away_count: 0 };
-            if (answerGazeData.length >= 3) {
-                eyeSummary = {
-                    gaze_pattern_x: answerGazeData.map(g => Math.round(g.x * 100) / 100),
-                    gaze_pattern_y: answerGazeData.map(g => Math.round(g.y * 1000) / 1000),
-                    samples: answerGazeData.length,
-                    eyes_away_count: answerEyeAwayCount
-                };
-            }
-
-            // Submit answer with eye data
+            // Submit answer
             const wc = txt.split(/\s+/).filter(Boolean).length;
             const ar = await fetch('/api/submit-answer', {
                 method: 'POST',
@@ -1594,8 +1492,7 @@
                     word_count: wc,
                     thinking_pause_sec: 0,
                     input_mode: 'voice',
-                    whisper_confidence: td.avg_confidence || 1.0,
-                    eye_movement: eyeSummary
+                    whisper_confidence: td.avg_confidence || 1.0
                 })
             });
 
@@ -1841,9 +1738,9 @@
             if (flaggedElements.has(el)) return;    // Already flagged
 
             // Skip our own elements
-            const ownIds = ['canary-element','cam-warning-overlay','head-turn-overlay','eye-read-overlay','eye-scan-overlay','tab-warning-overlay','cam-warning-btn','head-turn-btn','eye-read-btn','eye-scan-btn','tab-warning-btn'];
+            const ownIds = ['canary-element','cam-warning-overlay','head-turn-overlay','eye-read-overlay','tab-warning-overlay','cam-warning-btn','head-turn-btn','eye-read-btn','tab-warning-btn'];
             if (ownIds.includes(el.id)) return;
-            if (el.closest && (el.closest('#cam-warning-overlay') || el.closest('#head-turn-overlay') || el.closest('#eye-read-overlay') || el.closest('#eye-scan-overlay') || el.closest('#tab-warning-overlay'))) return;
+            if (el.closest && (el.closest('#cam-warning-overlay') || el.closest('#head-turn-overlay') || el.closest('#eye-read-overlay') || el.closest('#tab-warning-overlay'))) return;
 
             const tag = el.tagName || '';
             const st = window.getComputedStyle(el);
