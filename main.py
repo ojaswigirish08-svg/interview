@@ -1521,6 +1521,14 @@ async def transcribe_endpoint(request: Request, audio: UploadFile = File(...), s
     result=await loop.run_in_executor(None, transcribe_audio, audio_bytes, ext, session_id)
     return JSONResponse(result)
 
+@app.post("/api/end-session")
+async def end_session(data: dict):
+    sid = data.get("session_id")
+    session = sessions.get(sid)
+    if not session: raise HTTPException(404, "Session not found")
+    session["phase"] = "ended"
+    return JSONResponse({"ok": True})
+
 @app.post("/api/anticheat-event")
 async def anticheat_event(data: AntiCheatEvent):
     session=sessions.get(data.session_id)

@@ -984,6 +984,15 @@
         interviewEnded = true;
         sessionOn = false;
 
+        // Tell the server to end the session
+        if (sessionId) {
+            fetch('/api/end-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            }).catch(() => {});
+        }
+
         // Stop timer
         if (ticker) {
             clearInterval(ticker);
@@ -1328,6 +1337,15 @@
         sessionOn = false;
         if (ticker) { clearInterval(ticker); ticker = null; }
         forceStopAllAudio();
+
+        // Tell the server to end the session
+        if (sessionId) {
+            fetch('/api/end-session', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session_id: sessionId })
+            }).catch(() => {});
+        }
 
         setOrb('idle');
         document.getElementById('status-dot').classList.remove('live');
