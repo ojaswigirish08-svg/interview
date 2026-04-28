@@ -728,26 +728,26 @@
                     }
 
                     // ── EYE READING DETECTION (iris tracking) ──
-                    // Iris landmarks (refineLandmarks=true):
-                    //   468 = left iris center
-                    //   473 = right iris center
-                    // Eye corner landmarks:
-                    //   33  = left eye outer corner,  133 = left eye inner corner
-                    //   362 = right eye inner corner, 263 = right eye outer corner
                     let eyeReading = false;
                     let eyeDirection = null;
 
-                    if (lm.length > 473 && !turned) {  // Only check eyes if head is straight
+                    // Check if iris landmarks exist (refineLandmarks=true gives 478 points)
+                    const hasIris = lm[468] && lm[473] && lm[468].x !== undefined;
+
+                    if (hasIris && !turned) {  // Only check eyes if head is straight and iris available
                         const leftIris  = lm[468];   // left iris center
                         const rightIris = lm[473];   // right iris center
 
-                        // Eye corner landmarks
-                        const le33  = lm[33];    // left eye corner A
-                        const le133 = lm[133];   // left eye corner B
-                        const re263 = lm[263];   // right eye corner A
-                        const re362 = lm[362];   // right eye corner B
+                        // Use upper and lower eyelid + corners for more reliable eye boundary
+                        // Left eye:  landmarks 33 (outer corner) and 133 (inner corner)
+                        // Right eye: landmarks 362 (inner corner) and 263 (outer corner)
+                        // Plus vertical: 159 (left upper), 145 (left lower), 386 (right upper), 374 (right lower)
+                        const le33  = lm[33];
+                        const le133 = lm[133];
+                        const re263 = lm[263];
+                        const re362 = lm[362];
 
-                        // Always compute left/right by actual X position (handles any face orientation)
+                        // Get consistent left-to-right by actual X values
                         const leftEyeMinX  = Math.min(le33.x, le133.x);
                         const leftEyeMaxX  = Math.max(le33.x, le133.x);
                         const rightEyeMinX = Math.min(re263.x, re362.x);
@@ -759,29 +759,24 @@
                         let leftGaze = 0.5;
                         let rightGaze = 0.5;
 
-                        // Iris position within eye: 0.0 = leftmost, 1.0 = rightmost
-                        if (leftEyeWidth > 0.005) {
+                        if (leftEyeWidth > 0.003) {
                             leftGaze = (leftIris.x - leftEyeMinX) / leftEyeWidth;
                         }
-                        if (rightEyeWidth > 0.005) {
+                        if (rightEyeWidth > 0.003) {
                             rightGaze = (rightIris.x - rightEyeMinX) / rightEyeWidth;
                         }
 
-                        // Clamp to 0-1 range (iris can slightly overshoot corners)
                         leftGaze  = Math.max(0, Math.min(1, leftGaze));
                         rightGaze = Math.max(0, Math.min(1, rightGaze));
 
-                        // Average both eyes for reliability
                         const avgGaze = (leftGaze + rightGaze) / 2;
 
-                        // Gaze thresholds:
-                        // ~0.35-0.65 = looking at screen (centered)
-                        // <0.25 = eyes looking left
-                        // >0.75 = eyes looking right
+                        // Log every check so we can see values (remove after debugging)
+                        console.log(`[EyeGaze] L=${leftGaze.toFixed(3)} R=${rightGaze.toFixed(3)} avg=${avgGaze.toFixed(3)} | LW=${leftEyeWidth.toFixed(4)} RW=${rightEyeWidth.toFixed(4)} | iris L(${leftIris.x.toFixed(3)}) R(${rightIris.x.toFixed(3)})`);
+
                         if (avgGaze < 0.25 || avgGaze > 0.75) {
                             eyeReading = true;
                             eyeDirection = avgGaze < 0.25 ? 'left' : 'right';
-                            console.log(`[EyeGaze] Looking away ${eyeDirection} | L=${leftGaze.toFixed(2)} R=${rightGaze.toFixed(2)} avg=${avgGaze.toFixed(2)}`);
                         }
 
                         // ── Eye scanning detection (left↔right reading pattern) ──
@@ -865,8 +860,9 @@
             } else {
                 // Show live gaze value so we can verify detection
                 const gx = latestResult.gazeX;
-                faceStatus.textContent = 'face OK | gaze ' + (typeof gx === 'number' ? gx.toFixed(2) : '?');
-                faceStatus.style.color = '#4f4';
+                const irisOk = gx !== 0.5 && typeof gx === 'number';
+                faceStatus.textContent = irisOk ? ('gaze ' + gx.toFixed(2)) : 'face OK (no iris)';
+                faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
             }
 
             // --- Face presence check ---
