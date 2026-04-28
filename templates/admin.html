@@ -96,6 +96,8 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .ac-head_turn_termination{border-color:var(--rd)}
 .ac-eye_reading{border-color:var(--pu)}
 .ac-eye_reading_termination{border-color:var(--rd)}
+.ac-eye_scanning{border-color:var(--pu)}
+.ac-eye_scanning_termination{border-color:var(--rd)}
 .ac-type{font-size:11px;font-weight:700;font-family:'DM Mono',monospace;text-transform:uppercase}
 .ac-meta{font-size:12px;color:var(--g400);margin-top:3px}
 
@@ -334,6 +336,7 @@ function renderDashboard(d) {
     {key:'screen_share', label:'Screen Share', check: d.anticheat_log.some(e=>e.event_type==='screen_share')},
     {key:'head_turned', label:'Head Turned Away', check: d.anticheat_log.some(e=>e.event_type==='head_turned')},
     {key:'eye_reading', label:'Eye Reading Off-Screen', check: d.anticheat_log.some(e=>e.event_type==='eye_reading')},
+    {key:'eye_scanning', label:'Eye Scanning (Reading Text)', check: d.anticheat_log.some(e=>e.event_type==='eye_scanning')},
     {key:'clean_speech', label:'Filler Words Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('suspiciously_clean_speech'))},
     {key:'pronoun', label:'Pronouns Vanished', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('personal_pronouns_vanished'))},
     {key:'pause_var', label:'Low Pause Variance', check: d.turn_log.some(t=>(t.behavioral_flags||[]).includes('low_pause_variance'))},

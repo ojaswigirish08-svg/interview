@@ -628,6 +628,7 @@ def count_active_signals(session: dict, scored_history: list) -> int:
     if any(e["event_type"] == "canary_triggered" for e in anticheat): count += 1
     if any(e["event_type"] == "head_turned" for e in anticheat): count += 1
     if any(e["event_type"] == "eye_reading" for e in anticheat): count += 1
+    if any(e["event_type"] == "eye_scanning" for e in anticheat): count += 1
 
     flags_all = []
     for h in scored_history:
@@ -746,6 +747,12 @@ def compute_suspicion_score(session: dict, scored_history: list) -> dict:
     if eye_read_events:
         suspicion += len(eye_read_events) * 10
         flags.append(f"Eyes reading off-screen {len(eye_read_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_read_events[:3])})")
+
+    # Signal 4d: Eye scanning — left↔right reading pattern on screen (VERY HIGH)
+    eye_scan_events = [ev for ev in anticheat if ev["event_type"] == "eye_scanning"]
+    if eye_scan_events:
+        suspicion += len(eye_scan_events) * 15
+        flags.append(f"Eyes scanning left-right reading pattern {len(eye_scan_events)} time(s) — likely reading text on screen (turns {', '.join(str(ev['turn']) for ev in eye_scan_events[:3])})")
 
     # Signal 5: Filler words vanished (HIGH)
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags", [])]
@@ -2080,6 +2087,10 @@ async def start_interview(data: dict):
     if not session:
         raise HTTPException(404, "Session not found")
 
+    # Prevent restarting ended sessions
+    if session["phase"] == "ended":
+        raise HTTPException(400, "This interview session has already ended")
+
     # Use cached greeting/question if available (faster start)
     if session["phase"] == "greeting" and session.get("cached_first_question"):
         result = session["cached_first_question"]
@@ -2143,6 +2154,8 @@ async def submit_answer(data: AnswerSubmit):
     session = sessions.get(data.session_id)
     if not session:
         raise HTTPException(404, "Session not found")
+    if session["phase"] == "ended":
+        raise HTTPException(400, "This interview session has already ended")
 
     current_entry = session["history"][-1] if session["history"] else None
 

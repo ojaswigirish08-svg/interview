@@ -564,13 +564,20 @@
         let headTurnWarnings = 0;
         const HEAD_TURN_LIMIT = 3;        // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye reading detection state
+        // Eye looking away detection (static — eyes fixed off-screen)
         let eyeReadCount = 0;
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 4;         // 4 consecutive checks (~6 seconds) = 1 warning
 
+        // Eye scanning detection (dynamic — eyes sweeping left↔right reading text)
+        let gazeHistory = [];              // Buffer of recent avgGaze values
+        const GAZE_HISTORY_SIZE = 8;       // Track last 8 checks (~12 seconds window)
+        let eyeScanCount = 0;
+        let eyeScanWarnings = 0;
+        const EYE_SCAN_LIMIT = 2;         // 2 consecutive scan detections = 1 warning
+
         // Latest detection result (set by MediaPipe callback)
-        let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
+        let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
 
         // Warning overlay for camera (face not detected)
         const camWarningOverlay = document.createElement('div');
@@ -641,6 +648,30 @@
             eyeReadCount = 0;
         });
 
+        // Warning overlay for eye scanning (reading text pattern)
+        const eyeScanOverlay = document.createElement('div');
+        eyeScanOverlay.id = 'eye-scan-overlay';
+        eyeScanOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
+        eyeScanOverlay.innerHTML = `
+            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="font-size:40px;margin-bottom:12px;">&#128214;</div>
+                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Reading Pattern Detected</div>
+                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
+                    Your eye movement suggests you are reading something on screen.<br>
+                    Please answer from your own knowledge without external help.<br>
+                    <strong id="eye-scan-warn-text">Warning <span id="eye-scan-warn-num">1</span> of 2 — next time the interview will end.</strong>
+                </div>
+                <button id="eye-scan-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+                    I Understand — Continue
+                </button>
+            </div>`;
+        document.body.appendChild(eyeScanOverlay);
+        document.getElementById('eye-scan-btn').addEventListener('click', () => {
+            eyeScanOverlay.style.display = 'none';
+            eyeScanCount = 0;
+            gazeHistory = [];
+        });
+
         // ── Load MediaPipe Face Mesh ──
         async function loadModel() {
             try {
@@ -708,42 +739,77 @@
 
                     if (lm.length > 473 && !turned) {  // Only check eyes if head is straight
                         const leftIris     = lm[468];
-                        const leftEyeOuter = lm[33];
-                        const leftEyeInner = lm[133];
+                        const rightIris    = lm[473];
 
-                        const rightIris     = lm[473];
-                        const rightEyeInner = lm[362];
-                        const rightEyeOuter = lm[263];
+                        // Eye corners — use consistent left-to-right (screen X) for both eyes
+                        // Left eye:  33 = right side of screen, 133 = left side of screen
+                        // Right eye: 362 = right side of screen (inner), 263 = left side of screen (outer)
+                        // We normalize: 0 = leftmost corner, 1 = rightmost corner
+                        const leftEyeL  = lm[133];   // left eye's left corner (screen-left)
+                        const leftEyeR  = lm[33];    // left eye's right corner (screen-right)
+                        const rightEyeL = lm[263];   // right eye's left corner (screen-left)
+                        const rightEyeR = lm[362];   // right eye's right corner (screen-right)
 
-                        // Iris position within eye: 0 = outer corner, 1 = inner corner
-                        const leftEyeWidth = Math.abs(leftEyeInner.x - leftEyeOuter.x);
-                        const rightEyeWidth = Math.abs(rightEyeOuter.x - rightEyeInner.x);
+                        const leftEyeWidth  = leftEyeR.x - leftEyeL.x;
+                        const rightEyeWidth = rightEyeR.x - rightEyeL.x;
 
                         let leftGaze = 0.5;
                         let rightGaze = 0.5;
 
-                        if (leftEyeWidth > 0.01) {
-                            leftGaze = (leftIris.x - leftEyeOuter.x) / leftEyeWidth;
+                        // Iris position: 0 = looking screen-left, 1 = looking screen-right
+                        if (leftEyeWidth > 0.008) {
+                            leftGaze = (leftIris.x - leftEyeL.x) / leftEyeWidth;
                         }
-                        if (rightEyeWidth > 0.01) {
-                            rightGaze = (rightIris.x - rightEyeInner.x) / rightEyeWidth;
+                        if (rightEyeWidth > 0.008) {
+                            rightGaze = (rightIris.x - rightEyeL.x) / rightEyeWidth;
                         }
 
-                        // Average gaze of both eyes (more reliable)
+                        // Average both eyes for reliability
                         const avgGaze = (leftGaze + rightGaze) / 2;
 
                         // Gaze thresholds:
-                        // ~0.5 = looking at screen (centered)
-                        // <0.25 = eyes looking left
-                        // >0.75 = eyes looking right
+                        // ~0.4-0.6 = looking at screen (centered)
+                        // <0.25 = eyes looking left (screen-left)
+                        // >0.75 = eyes looking right (screen-right)
                         if (avgGaze < 0.25 || avgGaze > 0.75) {
                             eyeReading = true;
                             eyeDirection = avgGaze < 0.25 ? 'left' : 'right';
-                            console.log(`[EyeGaze] Reading ${eyeDirection} | leftGaze=${leftGaze.toFixed(2)} rightGaze=${rightGaze.toFixed(2)} avg=${avgGaze.toFixed(2)}`);
+                            console.log(`[EyeGaze] Looking away ${eyeDirection} | L=${leftGaze.toFixed(2)} R=${rightGaze.toFixed(2)} avg=${avgGaze.toFixed(2)}`);
+                        }
+
+                        // ── Eye scanning detection (left↔right reading pattern) ──
+                        // Track gaze positions over time to detect sweeping eye movement
+                        gazeHistory.push(avgGaze);
+                        if (gazeHistory.length > GAZE_HISTORY_SIZE) {
+                            gazeHistory.shift();
+                        }
+
+                        // Detect scanning: count direction changes in the gaze buffer
+                        // Reading text = eyes sweep left→right, snap back, repeat
+                        // This creates frequent direction flips in gaze position
+                        var scanning = false;
+                        if (gazeHistory.length >= 5) {
+                            let dirChanges = 0;
+                            let totalMovement = 0;
+                            for (let i = 2; i < gazeHistory.length; i++) {
+                                const prev = gazeHistory[i-1] - gazeHistory[i-2];
+                                const curr = gazeHistory[i] - gazeHistory[i-1];
+                                totalMovement += Math.abs(curr);
+                                // Direction changed and movement was significant (not noise)
+                                if (prev * curr < 0 && Math.abs(curr) > 0.04) {
+                                    dirChanges++;
+                                }
+                            }
+                            // Scanning = 3+ direction changes AND enough total movement
+                            // (rules out small jittery noise — needs real left↔right sweeps)
+                            if (dirChanges >= 3 && totalMovement > 0.3) {
+                                scanning = true;
+                                console.log(`[EyeGaze] SCANNING detected | dirChanges=${dirChanges} movement=${totalMovement.toFixed(2)} history=[${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
+                            }
                         }
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection };
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: typeof avgGaze !== 'undefined' ? avgGaze : 0.5, eyeScanning: scanning || false };
                 });
 
                 mediapipeReady = true;
@@ -774,7 +840,7 @@
                 return;
             }
 
-            const { present, headTurned, direction, eyeReading, eyeDirection } = latestResult;
+            const { present, headTurned, direction, eyeReading, eyeDirection, eyeScanning } = latestResult;
 
             // Update visible status on camera PIP
             if (!present) {
@@ -782,6 +848,9 @@
                 faceStatus.style.color = '#f44';
             } else if (headTurned) {
                 faceStatus.textContent = 'HEAD TURNED ' + direction + '!';
+                faceStatus.style.color = '#f44';
+            } else if (eyeScanning) {
+                faceStatus.textContent = 'READING DETECTED!';
                 faceStatus.style.color = '#f44';
             } else if (eyeReading) {
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
@@ -871,6 +940,36 @@
                 }
             } else if (present && !eyeReading) {
                 eyeReadCount = 0;
+            }
+
+            // --- Eye scanning check (reading text pattern: left↔right sweeping) ---
+            if (present && !headTurned && eyeScanning) {
+                eyeScanCount++;
+                console.log(`[EyeGaze] Scanning pattern (${eyeScanCount}/${EYE_SCAN_LIMIT})`);
+
+                if (eyeScanCount >= EYE_SCAN_LIMIT) {
+                    eyeScanWarnings++;
+                    sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings}`);
+
+                    if (eyeScanWarnings <= 2) {
+                        document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
+                        if (eyeScanWarnings === 2) {
+                            document.getElementById('eye-scan-warn-text').innerHTML =
+                                '<span style="color:#c44;font-weight:700;">Final warning — reading on screen again will end the interview.</span>';
+                        }
+                        eyeScanOverlay.style.display = 'flex';
+                    }
+
+                    if (eyeScanWarnings >= 3) {
+                        eyeScanOverlay.style.display = 'none';
+                        sendAntiCheat('eye_scanning_termination', `scanning_${eyeScanWarnings}_times`);
+                        endSessionWithMessage('Interview ended — repeated on-screen reading pattern detected.');
+                    }
+
+                    eyeScanCount = 0;
+                }
+            } else if (present && !eyeScanning) {
+                eyeScanCount = 0;
             }
 
             detecting = false;
@@ -1007,6 +1106,36 @@
             if (r.ok) {
                 sessionData = await r.json();
                 updateCandidateUI(sessionData);
+
+                // If session already ended, show completed state — don't restart
+                if (sessionData.phase === 'ended') {
+                    interviewEnded = true;
+                    sessionOn = false;
+                    setOrb('idle');
+                    document.getElementById('status-dot').classList.remove('live');
+                    document.getElementById('status-txt').textContent = 'ended';
+                    document.getElementById('live-badge').textContent = 'ended';
+                    document.getElementById('live-badge').classList.remove('active');
+                    document.getElementById('main-btn').textContent = 'view report';
+                    document.getElementById('main-btn').classList.remove('primary');
+                    document.getElementById('main-btn').style.background = '#4a4';
+                    document.getElementById('main-btn').style.borderColor = '#4a4';
+                    document.getElementById('main-btn').style.color = '#fff';
+                    document.getElementById('main-label').textContent = 'Interview Already Completed';
+                    document.getElementById('sub-label').textContent = 'click "view report" to see your results';
+                    document.getElementById('question-text').textContent = 'This interview session has already ended. Click "View Report" to see your results, or go back to start a new interview.';
+                    document.getElementById('footer-tag').textContent = 'completed';
+                    return;  // Don't start the interview again
+                }
+            } else {
+                // Session not found (expired or invalid)
+                setOrb('idle');
+                document.getElementById('main-label').textContent = 'Session Not Found';
+                document.getElementById('sub-label').textContent = 'this session may have expired';
+                document.getElementById('question-text').textContent = 'This interview session was not found. Please go back and start a new interview.';
+                document.getElementById('main-btn').textContent = 'go back';
+                document.getElementById('main-btn').onclick = () => { window.location.href = '/'; };
+                return;
             }
         } catch (e) {
             console.log('Could not load session info:', e);
