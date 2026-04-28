@@ -1548,27 +1548,13 @@
 
             document.getElementById('sub-label').textContent = 'sending answer...';
 
-            // Compute eye movement summary for this answer
-            let eyeSummary = { total_movement: 0, direction_changes: 0, variance: 0, samples: 0, eyes_away_count: 0, reading_likely: false };
+            // Send raw gaze pattern to LLM — let it decide if user is reading
+            let eyeSummary = { gaze_pattern: [], samples: 0, eyes_away_count: 0 };
             if (answerGazeData.length >= 3) {
-                let totalMov = 0, dirCh = 0;
-                for (let i = 1; i < answerGazeData.length; i++) {
-                    totalMov += Math.abs(answerGazeData[i] - answerGazeData[i-1]);
-                    if (i >= 2) {
-                        const p = answerGazeData[i-1] - answerGazeData[i-2];
-                        const c = answerGazeData[i] - answerGazeData[i-1];
-                        if (p * c < 0 && Math.abs(c) > 0.01) dirCh++;
-                    }
-                }
-                const avg = answerGazeData.reduce((a,b) => a+b, 0) / answerGazeData.length;
-                const vari = answerGazeData.reduce((s,g) => s + (g-avg)*(g-avg), 0) / answerGazeData.length;
                 eyeSummary = {
-                    total_movement: Math.round(totalMov * 1000) / 1000,
-                    direction_changes: dirCh,
-                    variance: Math.round(vari * 10000) / 10000,
+                    gaze_pattern: answerGazeData.map(g => Math.round(g * 100) / 100),
                     samples: answerGazeData.length,
-                    eyes_away_count: answerEyeAwayCount,
-                    reading_likely: totalMov > 0.15 && dirCh >= 2 && vari > 0.002
+                    eyes_away_count: answerEyeAwayCount
                 };
             }
 

@@ -921,34 +921,30 @@ def build_evaluation_prompt(session, question, answer, difficulty, question_type
     r = session["resume"]
     eye_section = ""
     if eye_data and eye_data.get("samples", 0) >= 3:
-        movement = eye_data.get("total_movement", 0)
-        dir_changes = eye_data.get("direction_changes", 0)
-        variance = eye_data.get("variance", 0)
+        gaze_pattern = eye_data.get("gaze_pattern", [])
         away_count = eye_data.get("eyes_away_count", 0)
-        reading_likely = eye_data.get("reading_likely", False)
-
-        # Classify eye behavior
-        if reading_likely:
-            eye_label = "HIGH eye movement — pattern suggests reading from external source"
-        elif movement > 0.10 or away_count > 0:
-            eye_label = "MODERATE eye movement — some glancing away detected"
-        else:
-            eye_label = "NORMAL — eyes steady, consistent with thinking/recalling"
 
         eye_section = f"""
 EYE TRACKING DATA (during this answer):
-- Eye movement level: {eye_label}
-- Total gaze movement: {movement} (normal <0.10, reading >0.15)
-- Direction changes: {dir_changes} (normal 0-1, reading 3+)
-- Gaze variance: {variance} (normal <0.002, reading >0.003)
-- Eyes looked away: {away_count} times
-- Reading likely: {"YES" if reading_likely else "NO"}
+The candidate's eye gaze X position was recorded every 1.5 seconds while answering.
+Values range from 0.0 (looking far left) to 1.0 (looking far right). 0.5 = looking at center/camera.
 
-EYE DATA RULES:
-- If reading_likely=YES and answer is suspiciously perfect → note "likely reading from external source" and reduce score by 2 points
-- If reading_likely=YES but answer is weak/partial → eye movement might be nervousness, do NOT penalize
-- If reading_likely=NO → ignore eye data completely, score normally
-- NEVER mention eye tracking to the candidate in feedback"""
+Gaze pattern (time series): {gaze_pattern}
+Total samples: {len(gaze_pattern)}
+Times eyes looked away (gaze < 0.35 or > 0.65): {away_count}
+
+ANALYZE THE PATTERN:
+- Stable values near 0.5 (e.g., [0.48, 0.50, 0.47, 0.49]) = NORMAL thinking/recalling
+- Values drifting to one side (e.g., [0.50, 0.55, 0.60, 0.65]) = looking at something on one side
+- Repeating sweep pattern (e.g., [0.35, 0.42, 0.50, 0.58, 0.38, 0.45, 0.55]) = READING TEXT (left→right sweep, snap back, repeat)
+- High variance with many direction changes = likely reading from external source
+
+SCORING RULES BASED ON EYE PATTERN:
+- If you detect a READING pattern AND the answer is suspiciously detailed/perfect → add "eye_reading_suspected" to notes and reduce score by 2
+- If you detect a READING pattern BUT the answer is weak/wrong → it's just nervousness, do NOT penalize
+- If pattern is NORMAL (stable near center) → ignore eye data, score normally
+- Add "eye_pattern": "normal" or "reading" or "looking_away" to your response
+- NEVER mention eye tracking in feedback shown to candidate"""
 
     return f"""You are a senior VLSI technical interviewer evaluating a candidate's answer.
 
@@ -973,6 +969,7 @@ RETURN ONLY VALID JSON:
   "missing_points": ["points candidate missed"],
   "score": 5,
   "score_reasoning": "one sentence",
+  "eye_pattern": "normal|reading|looking_away",
   "notes": "specific observation including eye behavior if relevant"
 }}"""
 
@@ -1686,7 +1683,7 @@ async def admin_session_detail(session_id: str, _=Depends(require_reviewer_or_ad
     turn_log=[]
     for h in history:
         eval_data=h.get("evaluation") or {}
-        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"notes":eval_data.get("notes","")})
+        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"eye_pattern":eval_data.get("eye_pattern",""),"eye_movement":h.get("eye_movement",{}),"notes":eval_data.get("notes","")})
     contradiction=session.get("contradiction_asked",{}); contradiction_log=[]
     for key,val in contradiction.items():
         if isinstance(val,str) and val in ("angle_1_asked","complete"):
