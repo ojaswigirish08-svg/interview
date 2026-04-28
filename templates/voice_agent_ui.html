@@ -714,7 +714,7 @@
                     const faceWidth = rightEdge.x - leftEdge.x;
 
                     if (faceWidth < 0.05) {
-                        latestResult = { present: true, headTurned: false, direction: null, eyeReading: false, eyeDirection: null };
+                        latestResult = { present: true, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
                         return;
                     }
 
@@ -738,39 +738,46 @@
                     let eyeDirection = null;
 
                     if (lm.length > 473 && !turned) {  // Only check eyes if head is straight
-                        const leftIris     = lm[468];
-                        const rightIris    = lm[473];
+                        const leftIris  = lm[468];   // left iris center
+                        const rightIris = lm[473];   // right iris center
 
-                        // Eye corners — use consistent left-to-right (screen X) for both eyes
-                        // Left eye:  33 = right side of screen, 133 = left side of screen
-                        // Right eye: 362 = right side of screen (inner), 263 = left side of screen (outer)
-                        // We normalize: 0 = leftmost corner, 1 = rightmost corner
-                        const leftEyeL  = lm[133];   // left eye's left corner (screen-left)
-                        const leftEyeR  = lm[33];    // left eye's right corner (screen-right)
-                        const rightEyeL = lm[263];   // right eye's left corner (screen-left)
-                        const rightEyeR = lm[362];   // right eye's right corner (screen-right)
+                        // Eye corner landmarks
+                        const le33  = lm[33];    // left eye corner A
+                        const le133 = lm[133];   // left eye corner B
+                        const re263 = lm[263];   // right eye corner A
+                        const re362 = lm[362];   // right eye corner B
 
-                        const leftEyeWidth  = leftEyeR.x - leftEyeL.x;
-                        const rightEyeWidth = rightEyeR.x - rightEyeL.x;
+                        // Always compute left/right by actual X position (handles any face orientation)
+                        const leftEyeMinX  = Math.min(le33.x, le133.x);
+                        const leftEyeMaxX  = Math.max(le33.x, le133.x);
+                        const rightEyeMinX = Math.min(re263.x, re362.x);
+                        const rightEyeMaxX = Math.max(re263.x, re362.x);
+
+                        const leftEyeWidth  = leftEyeMaxX - leftEyeMinX;
+                        const rightEyeWidth = rightEyeMaxX - rightEyeMinX;
 
                         let leftGaze = 0.5;
                         let rightGaze = 0.5;
 
-                        // Iris position: 0 = looking screen-left, 1 = looking screen-right
-                        if (leftEyeWidth > 0.008) {
-                            leftGaze = (leftIris.x - leftEyeL.x) / leftEyeWidth;
+                        // Iris position within eye: 0.0 = leftmost, 1.0 = rightmost
+                        if (leftEyeWidth > 0.005) {
+                            leftGaze = (leftIris.x - leftEyeMinX) / leftEyeWidth;
                         }
-                        if (rightEyeWidth > 0.008) {
-                            rightGaze = (rightIris.x - rightEyeL.x) / rightEyeWidth;
+                        if (rightEyeWidth > 0.005) {
+                            rightGaze = (rightIris.x - rightEyeMinX) / rightEyeWidth;
                         }
+
+                        // Clamp to 0-1 range (iris can slightly overshoot corners)
+                        leftGaze  = Math.max(0, Math.min(1, leftGaze));
+                        rightGaze = Math.max(0, Math.min(1, rightGaze));
 
                         // Average both eyes for reliability
                         const avgGaze = (leftGaze + rightGaze) / 2;
 
                         // Gaze thresholds:
-                        // ~0.4-0.6 = looking at screen (centered)
-                        // <0.25 = eyes looking left (screen-left)
-                        // >0.75 = eyes looking right (screen-right)
+                        // ~0.35-0.65 = looking at screen (centered)
+                        // <0.25 = eyes looking left
+                        // >0.75 = eyes looking right
                         if (avgGaze < 0.25 || avgGaze > 0.75) {
                             eyeReading = true;
                             eyeDirection = avgGaze < 0.25 ? 'left' : 'right';
@@ -856,7 +863,9 @@
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
                 faceStatus.style.color = '#fa0';
             } else {
-                faceStatus.textContent = 'face OK';
+                // Show live gaze value so we can verify detection
+                const gx = latestResult.gazeX;
+                faceStatus.textContent = 'face OK | gaze ' + (typeof gx === 'number' ? gx.toFixed(2) : '?');
                 faceStatus.style.color = '#4f4';
             }
 
