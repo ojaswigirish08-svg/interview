@@ -670,6 +670,9 @@ def count_active_signals(session, scored_history):
     if any(e["event_type"]=="dom_overlay"     for e in anticheat): count += 1
     if any(e["event_type"]=="screen_share"    for e in anticheat): count += 1
     if any(e["event_type"]=="canary_triggered" for e in anticheat): count += 1
+    if any(e["event_type"]=="head_turned"     for e in anticheat): count += 1
+    if any(e["event_type"]=="eye_reading"     for e in anticheat): count += 1
+    if any(e["event_type"]=="eye_scanning"    for e in anticheat): count += 1
     flags_all = []
     for h in scored_history: flags_all.extend(h.get("behavioral_flags",[]))
     if "suspiciously_clean_speech"   in flags_all: count += 1
@@ -716,6 +719,21 @@ def compute_suspicion_score(session, scored_history):
         if ev["event_type"]=="paste_event": suspicion+=15; flags.append(f"Paste event at T{ev['turn']}")
         if ev["event_type"] in ("dom_overlay","canary_triggered"): suspicion+=20; flags.append(f"AI browser extension detected at T{ev['turn']}")
         if ev["event_type"]=="screen_share": suspicion+=12; flags.append(f"Screen sharing at T{ev['turn']}")
+    # Head turned away (MEDIUM)
+    head_turn_events = [ev for ev in anticheat if ev["event_type"]=="head_turned"]
+    if head_turn_events:
+        suspicion += len(head_turn_events) * 8
+        flags.append(f"Candidate looked away from screen {len(head_turn_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in head_turn_events[:3])})")
+    # Eye reading — eyes looking off-screen while head faces camera (HIGH)
+    eye_read_events = [ev for ev in anticheat if ev["event_type"]=="eye_reading"]
+    if eye_read_events:
+        suspicion += len(eye_read_events) * 10
+        flags.append(f"Eyes reading off-screen {len(eye_read_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_read_events[:3])})")
+    # Eye scanning — left-right reading pattern on screen (VERY HIGH)
+    eye_scan_events = [ev for ev in anticheat if ev["event_type"]=="eye_scanning"]
+    if eye_scan_events:
+        suspicion += len(eye_scan_events) * 15
+        flags.append(f"Eyes scanning left-right reading pattern {len(eye_scan_events)} time(s) — likely reading text on screen (turns {', '.join(str(ev['turn']) for ev in eye_scan_events[:3])})")
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags",[])]
     if len(clean_turns)>=3: suspicion+=len(clean_turns)*8; flags.append(f"Filler words vanished in {len(clean_turns)} answers")
     pronoun_turns = [h for h in scored_history if "personal_pronouns_vanished" in h.get("behavioral_flags",[])]
@@ -1356,6 +1374,7 @@ async def get_session(session_id: str):
 async def start_interview(data: dict):
     sid=data.get("session_id"); session=sessions.get(sid)
     if not session: raise HTTPException(404,"Session not found")
+    if session["phase"]=="ended": raise HTTPException(400,"This interview session has already ended")
     if session["phase"]=="greeting" and session.get("cached_first_question"):
         result=session["cached_first_question"]; audio=session.get("cached_first_audio","")
         session["cached_first_question"]=None; session["cached_first_audio"]=None
@@ -1379,6 +1398,7 @@ async def start_interview(data: dict):
 async def submit_answer(request: Request, data: AnswerSubmit):
     session=sessions.get(data.session_id)
     if not session: raise HTTPException(404,"Session not found")
+    if session["phase"]=="ended": raise HTTPException(400,"This interview session has already ended")
     sid=data.session_id
     current_entry=session["history"][-1] if session["history"] else None
     if current_entry:
