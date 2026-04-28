@@ -881,6 +881,12 @@
                 faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
             }
 
+            // --- Collect eye data during answering (sent to LLM with the answer) ---
+            if (isAnswering && present && latestResult.gazeX >= 0 && latestResult.gazeX <= 1) {
+                answerGazeData.push(latestResult.gazeX);
+                if (eyeReading) answerEyeAwayCount++;
+            }
+
             // --- Face presence check ---
             if (present) {
                 noFaceCount = 0;
@@ -1108,6 +1114,10 @@
     let currentAudio = null;
     const SILENCE_THRESHOLD = 15;
     const SILENCE_TIMEOUT = 2000;
+
+    // Eye tracking data per answer (reset when recording starts, sent with answer)
+    let answerGazeData = [];       // Gaze X values collected during this answer
+    let answerEyeAwayCount = 0;    // Times eyes looked away during this answer
 
     // Get session ID from URL params
     const urlParams = new URLSearchParams(window.location.search);
@@ -1432,6 +1442,10 @@
             speechDetected = false;
             silenceStart = null;
 
+            // Reset eye tracking for this answer
+            answerGazeData = [];
+            answerEyeAwayCount = 0;
+
             setOrb('listening');
             document.getElementById('status-txt').textContent = 'listening';
             document.getElementById('main-label').textContent = 'Listening...';
@@ -1534,7 +1548,31 @@
 
             document.getElementById('sub-label').textContent = 'sending answer...';
 
-            // Submit answer
+            // Compute eye movement summary for this answer
+            let eyeSummary = { total_movement: 0, direction_changes: 0, variance: 0, samples: 0, eyes_away_count: 0, reading_likely: false };
+            if (answerGazeData.length >= 3) {
+                let totalMov = 0, dirCh = 0;
+                for (let i = 1; i < answerGazeData.length; i++) {
+                    totalMov += Math.abs(answerGazeData[i] - answerGazeData[i-1]);
+                    if (i >= 2) {
+                        const p = answerGazeData[i-1] - answerGazeData[i-2];
+                        const c = answerGazeData[i] - answerGazeData[i-1];
+                        if (p * c < 0 && Math.abs(c) > 0.01) dirCh++;
+                    }
+                }
+                const avg = answerGazeData.reduce((a,b) => a+b, 0) / answerGazeData.length;
+                const vari = answerGazeData.reduce((s,g) => s + (g-avg)*(g-avg), 0) / answerGazeData.length;
+                eyeSummary = {
+                    total_movement: Math.round(totalMov * 1000) / 1000,
+                    direction_changes: dirCh,
+                    variance: Math.round(vari * 10000) / 10000,
+                    samples: answerGazeData.length,
+                    eyes_away_count: answerEyeAwayCount,
+                    reading_likely: totalMov > 0.15 && dirCh >= 2 && vari > 0.002
+                };
+            }
+
+            // Submit answer with eye data
             const wc = txt.split(/\s+/).filter(Boolean).length;
             const ar = await fetch('/api/submit-answer', {
                 method: 'POST',
@@ -1547,7 +1585,8 @@
                     word_count: wc,
                     thinking_pause_sec: 0,
                     input_mode: 'voice',
-                    whisper_confidence: td.avg_confidence || 1.0
+                    whisper_confidence: td.avg_confidence || 1.0,
+                    eye_movement: eyeSummary
                 })
             });
 

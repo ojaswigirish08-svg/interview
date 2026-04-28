@@ -357,6 +357,7 @@ class AnswerSubmit(BaseModel):
     thinking_pause_sec: float = 0.0
     input_mode: str = "text"
     whisper_confidence: float = 1.0
+    eye_movement: dict = {}  # {total_movement, direction_changes, variance, samples, eyes_away_count, reading_likely}
 
 class AntiCheatEvent(BaseModel):
     session_id: str
@@ -916,13 +917,45 @@ RETURN ONLY VALID JSON (no markdown):
   "hint_text": "the hint if hint_given is true, otherwise null"
 }}"""
 
-def build_evaluation_prompt(session, question, answer, difficulty, question_type):
+def build_evaluation_prompt(session, question, answer, difficulty, question_type, eye_data=None):
     r = session["resume"]
+    eye_section = ""
+    if eye_data and eye_data.get("samples", 0) >= 3:
+        movement = eye_data.get("total_movement", 0)
+        dir_changes = eye_data.get("direction_changes", 0)
+        variance = eye_data.get("variance", 0)
+        away_count = eye_data.get("eyes_away_count", 0)
+        reading_likely = eye_data.get("reading_likely", False)
+
+        # Classify eye behavior
+        if reading_likely:
+            eye_label = "HIGH eye movement — pattern suggests reading from external source"
+        elif movement > 0.10 or away_count > 0:
+            eye_label = "MODERATE eye movement — some glancing away detected"
+        else:
+            eye_label = "NORMAL — eyes steady, consistent with thinking/recalling"
+
+        eye_section = f"""
+EYE TRACKING DATA (during this answer):
+- Eye movement level: {eye_label}
+- Total gaze movement: {movement} (normal <0.10, reading >0.15)
+- Direction changes: {dir_changes} (normal 0-1, reading 3+)
+- Gaze variance: {variance} (normal <0.002, reading >0.003)
+- Eyes looked away: {away_count} times
+- Reading likely: {"YES" if reading_likely else "NO"}
+
+EYE DATA RULES:
+- If reading_likely=YES and answer is suspiciously perfect → note "likely reading from external source" and reduce score by 2 points
+- If reading_likely=YES but answer is weak/partial → eye movement might be nervousness, do NOT penalize
+- If reading_likely=NO → ignore eye data completely, score normally
+- NEVER mention eye tracking to the candidate in feedback"""
+
     return f"""You are a senior VLSI technical interviewer evaluating a candidate's answer.
 
 CANDIDATE: {r['domain'].replace('_',' ')} | {r['level'].replace('_',' ')} ({r.get('years_experience',0)} years)
 QUESTION ({question_type}, {difficulty}): {question}
 ANSWER: {answer}
+{eye_section}
 
 EVALUATION RULES:
 - "I don't know" = quality "honest_admission", score 6/10
@@ -940,13 +973,13 @@ RETURN ONLY VALID JSON:
   "missing_points": ["points candidate missed"],
   "score": 5,
   "score_reasoning": "one sentence",
-  "notes": "specific observation"
+  "notes": "specific observation including eye behavior if relevant"
 }}"""
 
-def evaluate_answer_llm(session, question, answer, difficulty, question_type):
+def evaluate_answer_llm(session, question, answer, difficulty, question_type, eye_data=None):
     if not answer or question_type=="greeting": return None
     sid = session.get("id","unknown")
-    prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type)
+    prompt = build_evaluation_prompt(session, question, answer, difficulty, question_type, eye_data=eye_data)
     return call_llm_json([{"role":"user","content":prompt}], temperature=0.3, max_tokens=500,
                          _session_id=sid, _step="LLM_evaluation")
 
@@ -992,7 +1025,8 @@ def generate_question(session, candidate_answer=None):
     evaluation=None; result=None
     def _do_eval():
         le=session["history"][-1]
-        return evaluate_answer_llm(session,le.get("question",""),candidate_answer,le.get("difficulty","basic"),le.get("question_type",""))
+        eye_data=le.get("eye_movement")
+        return evaluate_answer_llm(session,le.get("question",""),candidate_answer,le.get("difficulty","basic"),le.get("question_type",""),eye_data=eye_data)
     def _do_qgen():
         return call_llm_json(messages, temperature=0.65, max_tokens=400, _session_id=sid, _step="LLM_question")
 
@@ -1418,6 +1452,7 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         current_entry["word_count"]=data.word_count; current_entry["thinking_pause_sec"]=data.thinking_pause_sec
         current_entry["input_mode"]=data.input_mode; current_entry["filler_rate"]=count_fillers(data.answer)
         current_entry["pronoun_rate"]=count_personal_pronouns(data.answer); current_entry["correction_rate"]=count_self_corrections(data.answer)
+        current_entry["eye_movement"]=data.eye_movement if data.eye_movement else {}
         dev=analyze_behavioral_deviation(session,data.answer,data.answer_duration_sec,data.word_count,data.thinking_pause_sec,data.input_mode,current_entry.get("difficulty","basic"))
         current_entry["behavioral_flags"]=dev["flags"]; current_entry["behavioral_deviation"]=dev["deviation_score"]
     if session["phase"]=="greeting":
