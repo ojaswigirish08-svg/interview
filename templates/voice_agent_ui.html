@@ -855,6 +855,7 @@
             }
 
             const { present, headTurned, direction, eyeReading, eyeDirection, eyeScanning } = latestResult;
+            const isAnswering = orbState === 'listening' || isRecording;
 
             // Update visible status on camera PIP
             if (!present) {
@@ -933,7 +934,6 @@
             }
 
             // --- Eye reading check (only when candidate is answering, not during AI speaking) ---
-            const isAnswering = orbState === 'listening' || isRecording;
             if (present && !headTurned && eyeReading && isAnswering) {
                 eyeReadCount++;
                 console.log(`[EyeGaze] Eyes reading ${eyeDirection} (${eyeReadCount}/${EYE_READ_LIMIT})`);
