@@ -574,14 +574,12 @@
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye reading pattern detection (sawtooth: sweep right → snap left → repeat)
-        let gazeHistory = [];              // Rolling buffer of {gaze, time} values
-        const GAZE_HISTORY_SIZE = 20;      // Track last 20 checks (~30 seconds window)
-        let sawtoothCount = 0;             // How many sawtooth cycles detected in current window
-        let totalSawtoothDetections = 0;   // Total across the interview
+        // Eye reading detection (movement-based — reading = high eye activity)
+        let gazeHistory = [];              // Rolling buffer of gaze X values
+        const GAZE_HISTORY_SIZE = 12;      // Track last 12 checks (~18 seconds)
+        let readingFlagCount = 0;          // How many times high-movement detected
         let eyeScanWarnings = 0;
-        const SAWTOOTH_WARN_THRESHOLD = 3; // Need 3 sawtooth cycles in one window to flag once
-        const WARN_AFTER_FLAGS = 2;        // Need 2 flags (= 6 cycles total) before warning
+        const READING_FLAG_THRESHOLD = 3;  // Need 3 high-movement windows before warning
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
@@ -675,8 +673,7 @@
         document.body.appendChild(eyeScanOverlay);
         document.getElementById('eye-scan-btn').addEventListener('click', () => {
             eyeScanOverlay.style.display = 'none';
-            totalSawtoothDetections = 0;
-            sawtoothCount = 0;
+            readingFlagCount = 0;
             gazeHistory = [];
         });
 
@@ -772,69 +769,51 @@
                                     eyeDirection = currentGaze < 0.35 ? 'left' : 'right';
                                 }
 
-                                // ── 2. READING PATTERN (sawtooth detector) ──
-                                // Reading = eyes sweep left→right (following text line)
-                                //           then snap back left (next line)
-                                //           repeat multiple times
-                                // Pattern: ↗↗↗↙↗↗↗↙↗↗↗↙ (sawtooth wave)
+                                // ── 2. READING DETECTION (movement-based) ──
+                                // Reading = high eye movement (lots of gaze changes)
+                                // Thinking = stable gaze (small random jitter)
                                 gazeHistory.push(currentGaze);
                                 if (gazeHistory.length > GAZE_HISTORY_SIZE) gazeHistory.shift();
 
-                                if (gazeHistory.length >= 8) {
-                                    // Detect sawtooth cycles:
-                                    // A cycle = gaze moves right by >0.06 total, then snaps left by >0.04
-                                    let cycles = 0;
-                                    let sweepStart = gazeHistory[0];
-                                    let sweeping = false;  // true = currently moving right
-                                    let maxInSweep = sweepStart;
-
+                                if (gazeHistory.length >= 6) {
+                                    // Calculate total distance traveled by gaze
+                                    let totalMovement = 0;
+                                    let directionChanges = 0;
                                     for (let i = 1; i < gazeHistory.length; i++) {
-                                        const g = gazeHistory[i];
-                                        const prev = gazeHistory[i-1];
-                                        const delta = g - prev;
-
-                                        if (!sweeping) {
-                                            // Looking for rightward movement to start a sweep
-                                            if (delta > 0.02) {
-                                                sweeping = true;
-                                                sweepStart = prev;
-                                                maxInSweep = g;
-                                            }
-                                        } else {
-                                            // Currently in a rightward sweep
-                                            if (g > maxInSweep) maxInSweep = g;
-
-                                            // Check for snap-back (leftward jump)
-                                            if (delta < -0.03) {
-                                                // Was the sweep significant enough?
-                                                const sweepSize = maxInSweep - sweepStart;
-                                                if (sweepSize > 0.05) {
-                                                    cycles++;  // One complete read-line cycle
-                                                }
-                                                sweeping = false;
-                                                sweepStart = g;
-                                                maxInSweep = g;
+                                        const delta = Math.abs(gazeHistory[i] - gazeHistory[i-1]);
+                                        totalMovement += delta;
+                                        // Count direction changes
+                                        if (i >= 2) {
+                                            const prev = gazeHistory[i-1] - gazeHistory[i-2];
+                                            const curr = gazeHistory[i] - gazeHistory[i-1];
+                                            if (prev * curr < 0 && Math.abs(curr) > 0.01) {
+                                                directionChanges++;
                                             }
                                         }
                                     }
 
-                                    // Also count if we're in the middle of a sweep at the end
-                                    if (sweeping) {
-                                        const sweepSize = maxInSweep - sweepStart;
-                                        if (sweepSize > 0.05) cycles++;
-                                    }
+                                    // Calculate variance (spread of gaze positions)
+                                    const avg = gazeHistory.reduce((a,b) => a+b, 0) / gazeHistory.length;
+                                    const variance = gazeHistory.reduce((s,g) => s + (g-avg)*(g-avg), 0) / gazeHistory.length;
 
-                                    sawtoothCount = cycles;
+                                    // Reading indicators:
+                                    // - Total movement > 0.15 (eyes traveling a lot)
+                                    // - Direction changes > 2 (eyes going back and forth)
+                                    // - Variance > 0.002 (gaze spread out, not stable)
+                                    const isReading = totalMovement > 0.15 && directionChanges >= 2 && variance > 0.002;
 
-                                    if (cycles >= SAWTOOTH_WARN_THRESHOLD) {
-                                        totalSawtoothDetections++;
-                                        console.log(`[EyeGaze] READING PATTERN: ${cycles} sawtooth cycles detected (total flags: ${totalSawtoothDetections}) | history=[${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
+                                    if (isReading) {
+                                        readingFlagCount++;
+                                        console.log(`[EyeGaze] Reading activity #${readingFlagCount} | move=${totalMovement.toFixed(3)} dirChanges=${directionChanges} var=${variance.toFixed(4)} | [${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
 
-                                        if (totalSawtoothDetections >= WARN_AFTER_FLAGS) {
+                                        if (readingFlagCount >= READING_FLAG_THRESHOLD) {
                                             scanning = true;
-                                            // Reset history so it needs to accumulate again
                                             gazeHistory = [];
-                                            sawtoothCount = 0;
+                                        }
+                                    } else {
+                                        // Decay flag count slowly (forgive occasional movement)
+                                        if (readingFlagCount > 0 && gazeHistory.length >= GAZE_HISTORY_SIZE) {
+                                            readingFlagCount = Math.max(0, readingFlagCount - 1);
                                         }
                                     }
                                 }
@@ -887,8 +866,8 @@
             } else if (eyeScanning) {
                 faceStatus.textContent = 'READING DETECTED!';
                 faceStatus.style.color = '#f44';
-            } else if (present && !headTurned && sawtoothCount >= 2 && isAnswering) {
-                faceStatus.textContent = 'reading? ' + sawtoothCount + ' sweeps';
+            } else if (present && !headTurned && readingFlagCount >= 1 && isAnswering) {
+                faceStatus.textContent = 'reading? ' + readingFlagCount + '/' + READING_FLAG_THRESHOLD;
                 faceStatus.style.color = '#fa0';
             } else if (eyeReading) {
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
@@ -987,14 +966,14 @@
             // --- Eye scanning check (sawtooth reading pattern — only when answering) ---
             if (present && !headTurned && eyeScanning && isAnswering) {
                 eyeScanWarnings++;
-                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},sawtooth_total:${totalSawtoothDetections},cycles:${sawtoothCount}`);
-                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (${totalSawtoothDetections} total detections, ${sawtoothCount} cycles in current window)`);
+                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},flags:${readingFlagCount}`);
+                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (${readingFlagCount} movement flags)`);
 
                 if (eyeScanWarnings <= 2) {
                     document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
                     if (eyeScanWarnings === 2) {
                         document.getElementById('eye-scan-warn-text').innerHTML =
-                            '<span style="color:#c44;font-weight:700;">Final warning — reading on screen again will end the interview.</span>';
+                            '<span style="color:#c44;font-weight:700;">Final warning — reading again will end the interview.</span>';
                     }
                     eyeScanOverlay.style.display = 'flex';
                 }
@@ -1006,7 +985,7 @@
                 }
 
                 // Reset so it needs to accumulate again
-                totalSawtoothDetections = 0;
+                readingFlagCount = 0;
                 gazeHistory = [];
             }
 
