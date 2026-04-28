@@ -574,12 +574,14 @@
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // Eye scanning detection (reading pattern — eyes sweep left→right repeatedly)
-        let gazeHistory = [];              // Rolling buffer of gaze X values
-        const GAZE_HISTORY_SIZE = 10;      // Track last 10 checks (~15 seconds)
-        let scanPatternCount = 0;          // How many times scanning pattern detected
+        // Eye reading pattern detection (sawtooth: sweep right → snap left → repeat)
+        let gazeHistory = [];              // Rolling buffer of {gaze, time} values
+        const GAZE_HISTORY_SIZE = 20;      // Track last 20 checks (~30 seconds window)
+        let sawtoothCount = 0;             // How many sawtooth cycles detected in current window
+        let totalSawtoothDetections = 0;   // Total across the interview
         let eyeScanWarnings = 0;
-        const SCAN_WARN_THRESHOLD = 3;     // Need 3 scan detections before warning (not just 1)
+        const SAWTOOTH_WARN_THRESHOLD = 3; // Need 3 sawtooth cycles in one window to flag once
+        const WARN_AFTER_FLAGS = 2;        // Need 2 flags (= 6 cycles total) before warning
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
@@ -673,7 +675,8 @@
         document.body.appendChild(eyeScanOverlay);
         document.getElementById('eye-scan-btn').addEventListener('click', () => {
             eyeScanOverlay.style.display = 'none';
-            scanPatternCount = 0;
+            totalSawtoothDetections = 0;
+            sawtoothCount = 0;
             gazeHistory = [];
         });
 
@@ -769,31 +772,69 @@
                                     eyeDirection = currentGaze < 0.35 ? 'left' : 'right';
                                 }
 
-                                // ── 2. READING PATTERN (left↔right sweep detection) ──
+                                // ── 2. READING PATTERN (sawtooth detector) ──
+                                // Reading = eyes sweep left→right (following text line)
+                                //           then snap back left (next line)
+                                //           repeat multiple times
+                                // Pattern: ↗↗↗↙↗↗↗↙↗↗↗↙ (sawtooth wave)
                                 gazeHistory.push(currentGaze);
                                 if (gazeHistory.length > GAZE_HISTORY_SIZE) gazeHistory.shift();
 
-                                // Need at least 6 data points (~9 seconds) to detect pattern
-                                if (gazeHistory.length >= 6) {
-                                    let dirChanges = 0;
-                                    let bigMoves = 0;
-                                    for (let i = 2; i < gazeHistory.length; i++) {
-                                        const d1 = gazeHistory[i-1] - gazeHistory[i-2];
-                                        const d2 = gazeHistory[i] - gazeHistory[i-1];
-                                        // Count significant direction reversals
-                                        if (d1 * d2 < 0 && Math.abs(d2) > 0.03) {
-                                            dirChanges++;
+                                if (gazeHistory.length >= 8) {
+                                    // Detect sawtooth cycles:
+                                    // A cycle = gaze moves right by >0.06 total, then snaps left by >0.04
+                                    let cycles = 0;
+                                    let sweepStart = gazeHistory[0];
+                                    let sweeping = false;  // true = currently moving right
+                                    let maxInSweep = sweepStart;
+
+                                    for (let i = 1; i < gazeHistory.length; i++) {
+                                        const g = gazeHistory[i];
+                                        const prev = gazeHistory[i-1];
+                                        const delta = g - prev;
+
+                                        if (!sweeping) {
+                                            // Looking for rightward movement to start a sweep
+                                            if (delta > 0.02) {
+                                                sweeping = true;
+                                                sweepStart = prev;
+                                                maxInSweep = g;
+                                            }
+                                        } else {
+                                            // Currently in a rightward sweep
+                                            if (g > maxInSweep) maxInSweep = g;
+
+                                            // Check for snap-back (leftward jump)
+                                            if (delta < -0.03) {
+                                                // Was the sweep significant enough?
+                                                const sweepSize = maxInSweep - sweepStart;
+                                                if (sweepSize > 0.05) {
+                                                    cycles++;  // One complete read-line cycle
+                                                }
+                                                sweeping = false;
+                                                sweepStart = g;
+                                                maxInSweep = g;
+                                            }
                                         }
-                                        if (Math.abs(d2) > 0.05) bigMoves++;
                                     }
-                                    // Reading pattern = 3+ direction changes + significant movement
-                                    if (dirChanges >= 3 && bigMoves >= 3) {
-                                        // Don't flag immediately — count occurrences
-                                        scanPatternCount++;
-                                        console.log(`[EyeGaze] Scan pattern #${scanPatternCount} | changes=${dirChanges} bigMoves=${bigMoves}`);
-                                        // Only set scanning=true after multiple detections
-                                        if (scanPatternCount >= SCAN_WARN_THRESHOLD) {
+
+                                    // Also count if we're in the middle of a sweep at the end
+                                    if (sweeping) {
+                                        const sweepSize = maxInSweep - sweepStart;
+                                        if (sweepSize > 0.05) cycles++;
+                                    }
+
+                                    sawtoothCount = cycles;
+
+                                    if (cycles >= SAWTOOTH_WARN_THRESHOLD) {
+                                        totalSawtoothDetections++;
+                                        console.log(`[EyeGaze] READING PATTERN: ${cycles} sawtooth cycles detected (total flags: ${totalSawtoothDetections}) | history=[${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
+
+                                        if (totalSawtoothDetections >= WARN_AFTER_FLAGS) {
                                             scanning = true;
+                                            // Reset history so it needs to accumulate again
+                                            gazeHistory = [];
+                                            sawtoothCount = 0;
                                         }
                                     }
                                 }
@@ -846,6 +887,9 @@
             } else if (eyeScanning) {
                 faceStatus.textContent = 'READING DETECTED!';
                 faceStatus.style.color = '#f44';
+            } else if (present && !headTurned && sawtoothCount >= 2 && isAnswering) {
+                faceStatus.textContent = 'reading? ' + sawtoothCount + ' sweeps';
+                faceStatus.style.color = '#fa0';
             } else if (eyeReading) {
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
                 faceStatus.style.color = '#fa0';
@@ -940,11 +984,11 @@
                 eyeReadCount = 0;
             }
 
-            // --- Eye scanning check (reading pattern — only when candidate is answering) ---
+            // --- Eye scanning check (sawtooth reading pattern — only when answering) ---
             if (present && !headTurned && eyeScanning && isAnswering) {
                 eyeScanWarnings++;
-                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},patterns:${scanPatternCount}`);
-                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (after ${scanPatternCount} scan patterns)`);
+                sendAntiCheat('eye_scanning', `warnings:${eyeScanWarnings},sawtooth_total:${totalSawtoothDetections},cycles:${sawtoothCount}`);
+                console.log(`[EyeGaze] READING WARNING #${eyeScanWarnings} (${totalSawtoothDetections} total detections, ${sawtoothCount} cycles in current window)`);
 
                 if (eyeScanWarnings <= 2) {
                     document.getElementById('eye-scan-warn-num').textContent = eyeScanWarnings;
@@ -958,11 +1002,11 @@
                 if (eyeScanWarnings >= 3) {
                     eyeScanOverlay.style.display = 'none';
                     sendAntiCheat('eye_scanning_termination', `scanning_${eyeScanWarnings}_times`);
-                    endSessionWithMessage('Interview ended — repeated on-screen reading pattern detected.');
+                    endSessionWithMessage('Interview ended — repeated reading pattern detected.');
                 }
 
-                // Reset pattern count so it needs to accumulate again for next warning
-                scanPatternCount = 0;
+                // Reset so it needs to accumulate again
+                totalSawtoothDetections = 0;
                 gazeHistory = [];
             }
 
@@ -1752,85 +1796,125 @@
         }
     }, 2000);
 
-    // 8. DOM overlay + Canary + AI extension detection (Parakeet AI, etc.)
+    // 8. DOM overlay + AI extension detection (Parakeet AI, etc.)
     (function setupOverlayDetection() {
+        // Snapshot all elements on page at load time
+        const originalElements = new Set();
+        document.querySelectorAll('*').forEach(el => originalElements.add(el));
+
         const canary = document.getElementById('canary-element');
-        if (!canary || !window.MutationObserver) return;
-
-        const canaryOriginalText = canary.textContent;
+        const canaryOriginalText = canary ? canary.textContent : '';
         let overlayWarnings = 0;
+        let flaggedElements = new WeakSet();
 
-        const observer = new MutationObserver(mutations => {
-            if (!sessionOn || interviewEnded) return;
+        // Function to check if an element is suspicious
+        function checkElement(el) {
+            if (!el || el.nodeType !== 1) return;
+            if (originalElements.has(el)) return;  // Was on page at load
+            if (flaggedElements.has(el)) return;    // Already flagged
 
-            for (const m of mutations) {
-                // Check new nodes added to page
-                for (const node of m.addedNodes) {
-                    if (node.nodeType !== 1) continue;
-                    const st = window.getComputedStyle(node);
-                    const zIndex = parseInt(st.zIndex) || 0;
+            // Skip our own elements
+            const ownIds = ['canary-element','cam-warning-overlay','head-turn-overlay','eye-read-overlay','eye-scan-overlay','tab-warning-overlay','cam-warning-btn','head-turn-btn','eye-read-btn','eye-scan-btn','tab-warning-btn'];
+            if (ownIds.includes(el.id)) return;
+            if (el.closest && (el.closest('#cam-warning-overlay') || el.closest('#head-turn-overlay') || el.closest('#eye-read-overlay') || el.closest('#eye-scan-overlay') || el.closest('#tab-warning-overlay'))) return;
 
-                    // Detect fixed/absolute high-z overlays (AI answer popups)
-                    if ((st.position === 'fixed' || st.position === 'absolute') && zIndex > 1000 && node.id !== 'canary-element') {
-                        overlayWarnings++;
-                        const info = `z:${zIndex} tag:${node.tagName} class:${node.className?.substring(0,50)} id:${node.id}`;
-                        sendAntiCheat('dom_overlay', info);
-                        console.log(`[Anti-cheat] DOM overlay detected: ${info}`);
+            const tag = el.tagName || '';
+            const st = window.getComputedStyle(el);
+            const zIndex = parseInt(st.zIndex) || 0;
+            const pos = st.position;
+            const vis = st.visibility !== 'hidden' && st.display !== 'none' && parseFloat(st.opacity) > 0.1;
+            const w = el.offsetWidth || 0;
+            const h = el.offsetHeight || 0;
+            const text = (el.textContent || '').trim();
+            const cls = (el.className && typeof el.className === 'string') ? el.className : '';
+            const id = el.id || '';
 
-                        // Check if overlay contains text (likely an AI answer)
-                        const text = (node.textContent || '').trim();
-                        if (text.length > 20) {
-                            sendAntiCheat('ai_answer_overlay', `chars:${text.length} preview:${text.substring(0,60)}`);
-                            console.log(`[Anti-cheat] AI answer overlay text detected (${text.length} chars)`);
-                        }
-
-                        // End interview after 2 overlay detections
-                        if (overlayWarnings >= 2) {
-                            sendAntiCheat('overlay_termination', `overlays:${overlayWarnings}`);
-                            endSessionWithMessage('Interview ended — unauthorized screen overlay detected.');
-                        }
-                    }
+            // Rule 1: Any visible fixed/absolute element with content (overlay)
+            if (vis && (pos === 'fixed' || pos === 'absolute') && w > 50 && h > 30 && text.length > 10) {
+                flaggedElements.add(el);
+                overlayWarnings++;
+                sendAntiCheat('dom_overlay', `tag:${tag} z:${zIndex} size:${w}x${h} pos:${pos} text:${text.length}chars class:${cls.substring(0,40)}`);
+                console.log(`[Anti-cheat] Overlay: ${tag} ${w}x${h} z:${zIndex} "${text.substring(0,40)}..."`);
+                if (text.length > 30) {
+                    sendAntiCheat('ai_answer_overlay', `chars:${text.length} preview:${text.substring(0,80)}`);
                 }
-
-                // Check if canary was modified (extension reading page content)
-                if (m.target === canary || canary.contains(m.target)) {
-                    if (canary.textContent !== canaryOriginalText) {
-                        sendAntiCheat('canary_triggered', 'canary_text_modified');
-                        console.log('[Anti-cheat] Canary element modified by external tool');
-                    }
+                if (overlayWarnings >= 2) {
+                    sendAntiCheat('overlay_termination', `overlays:${overlayWarnings}`);
+                    endSessionWithMessage('Interview ended — unauthorized screen overlay detected.');
                 }
+                return;
             }
-        });
 
-        observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-            characterData: true,
-            attributes: true
-        });
+            // Rule 2: Shadow DOM host (extensions often use shadow DOM to hide content)
+            if (el.shadowRoot) {
+                flaggedElements.add(el);
+                const shadowText = el.shadowRoot.textContent || '';
+                sendAntiCheat('shadow_dom_detected', `tag:${tag} shadowText:${shadowText.length}chars class:${cls.substring(0,40)}`);
+                console.log(`[Anti-cheat] Shadow DOM element: ${tag} (${shadowText.length} chars inside)`);
+                if (shadowText.length > 30) {
+                    sendAntiCheat('ai_answer_overlay', `shadow_dom chars:${shadowText.length} preview:${shadowText.substring(0,80)}`);
+                    overlayWarnings++;
+                    if (overlayWarnings >= 2) {
+                        sendAntiCheat('overlay_termination', `shadow_overlays:${overlayWarnings}`);
+                        endSessionWithMessage('Interview ended — unauthorized screen overlay detected.');
+                    }
+                }
+                return;
+            }
 
-        // Periodic scan for injected elements (catches extensions that inject before observer starts)
+            // Rule 3: Injected iframe
+            if (tag === 'IFRAME' && vis && w > 50 && h > 30) {
+                flaggedElements.add(el);
+                sendAntiCheat('injected_iframe', `src:${(el.src||'').substring(0,60)} size:${w}x${h}`);
+                console.log(`[Anti-cheat] Injected iframe: ${el.src} ${w}x${h}`);
+                overlayWarnings++;
+                if (overlayWarnings >= 2) {
+                    sendAntiCheat('overlay_termination', `iframe_overlays:${overlayWarnings}`);
+                    endSessionWithMessage('Interview ended — unauthorized screen overlay detected.');
+                }
+                return;
+            }
+        }
+
+        // MutationObserver — catches elements as they're injected
+        if (window.MutationObserver) {
+            const observer = new MutationObserver(mutations => {
+                if (!sessionOn || interviewEnded) return;
+                for (const m of mutations) {
+                    for (const node of m.addedNodes) {
+                        checkElement(node);
+                        // Also check children of added nodes
+                        if (node.querySelectorAll) {
+                            node.querySelectorAll('*').forEach(child => checkElement(child));
+                        }
+                    }
+                    // Canary modification check
+                    if (canary && (m.target === canary || (canary.contains && canary.contains(m.target)))) {
+                        if (canary.textContent !== canaryOriginalText) {
+                            sendAntiCheat('canary_triggered', 'canary_text_modified');
+                            console.log('[Anti-cheat] Canary modified by external tool');
+                        }
+                    }
+                }
+            });
+            // Watch both html and body to catch all injections
+            observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true });
+        }
+
+        // Periodic full-page scan (catches elements that bypass MutationObserver)
         setInterval(() => {
             if (!sessionOn || interviewEnded) return;
 
-            // Look for common AI tool overlay patterns
-            const suspiciousSelectors = [
-                '[class*="parakeet"]', '[class*="copilot"]', '[class*="ai-answer"]',
-                '[class*="gpt"]', '[class*="assistant"]', '[class*="overlay"]',
-                '[id*="parakeet"]', '[id*="copilot"]', '[id*="ai-"]',
-                'iframe[style*="z-index"]'
-            ];
-            for (const sel of suspiciousSelectors) {
-                try {
-                    const el = document.querySelector(sel);
-                    if (el && !el._flagged) {
-                        el._flagged = true;
-                        sendAntiCheat('ai_extension_detected', `selector:${sel} tag:${el.tagName}`);
-                        console.log(`[Anti-cheat] AI extension element found: ${sel}`);
-                    }
-                } catch(e) {}
-            }
-        }, 3000);
+            // Scan ALL elements not in original snapshot
+            document.querySelectorAll('*').forEach(el => {
+                if (!originalElements.has(el)) checkElement(el);
+            });
+
+            // Check for shadow DOM hosts anywhere on page
+            document.querySelectorAll('*').forEach(el => {
+                if (el.shadowRoot && !flaggedElements.has(el)) checkElement(el);
+            });
+        }, 2000);
     })();
 
     // Send anti-cheat event to server
