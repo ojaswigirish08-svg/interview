@@ -921,30 +921,51 @@ def build_evaluation_prompt(session, question, answer, difficulty, question_type
     r = session["resume"]
     eye_section = ""
     if eye_data and eye_data.get("samples", 0) >= 3:
-        gaze_pattern = eye_data.get("gaze_pattern", [])
+        gaze_x = eye_data.get("gaze_pattern_x", [])
+        gaze_y = eye_data.get("gaze_pattern_y", [])
         away_count = eye_data.get("eyes_away_count", 0)
 
         eye_section = f"""
-EYE TRACKING DATA (during this answer):
-The candidate's eye gaze X position was recorded every 1.5 seconds while answering.
-Values range from 0.0 (looking far left) to 1.0 (looking far right). 0.5 = looking at center/camera.
+EYE TRACKING DATA (recorded every 1.5 seconds while candidate answered):
 
-Gaze pattern (time series): {gaze_pattern}
-Total samples: {len(gaze_pattern)}
-Times eyes looked away (gaze < 0.35 or > 0.65): {away_count}
+Horizontal gaze (X): {gaze_x}
+  0.0 = looking far left, 0.5 = center/camera, 1.0 = looking far right
 
-ANALYZE THE PATTERN:
-- Stable values near 0.5 (e.g., [0.48, 0.50, 0.47, 0.49]) = NORMAL thinking/recalling
-- Values drifting to one side (e.g., [0.50, 0.55, 0.60, 0.65]) = looking at something on one side
-- Repeating sweep pattern (e.g., [0.35, 0.42, 0.50, 0.58, 0.38, 0.45, 0.55]) = READING TEXT (left→right sweep, snap back, repeat)
-- High variance with many direction changes = likely reading from external source
+Vertical gaze (Y): {gaze_y}
+  Lower values = looking up, Higher values = looking down
 
-SCORING RULES BASED ON EYE PATTERN:
-- If you detect a READING pattern AND the answer is suspiciously detailed/perfect → add "eye_reading_suspected" to notes and reduce score by 2
-- If you detect a READING pattern BUT the answer is weak/wrong → it's just nervousness, do NOT penalize
-- If pattern is NORMAL (stable near center) → ignore eye data, score normally
-- Add "eye_pattern": "normal" or "reading" or "looking_away" to your response
-- NEVER mention eye tracking in feedback shown to candidate"""
+Times eyes looked away: {away_count}
+Samples: {len(gaze_x)}
+
+HOW TO DETECT READING:
+Reading text follows a specific pattern:
+1. X moves LEFT→RIGHT gradually (scanning across a line of text)
+2. X snaps back to LEFT suddenly (going to next line)
+3. Y moves slightly DOWNWARD over time (progressing through lines)
+4. Steps 1-3 REPEAT multiple times
+
+Example of READING pattern:
+  X: [0.38, 0.42, 0.48, 0.55, 0.36, 0.40, 0.47, 0.54, 0.35, 0.43]
+  Y: [0.510, 0.511, 0.512, 0.513, 0.515, 0.516, 0.517, 0.518, 0.520, 0.521]
+  → X sweeps right then snaps left (twice), Y consistently goes down = READING
+
+Example of NORMAL (thinking):
+  X: [0.48, 0.50, 0.47, 0.49, 0.51, 0.48]
+  Y: [0.512, 0.511, 0.513, 0.512, 0.511, 0.512]
+  → X stable near center, Y stable = NORMAL
+
+Example of LOOKING AWAY:
+  X: [0.50, 0.58, 0.65, 0.68, 0.70, 0.66]
+  Y: [0.512, 0.510, 0.510, 0.511, 0.510, 0.511]
+  → X drifts to one side and stays = LOOKING AWAY
+
+SCORING RULES:
+- READING pattern + perfect/detailed answer → add "eye_reading_suspected" to notes, reduce score by 2
+- READING pattern + weak/wrong answer → nervousness, do NOT penalize
+- LOOKING AWAY pattern → note it but don't change score
+- NORMAL pattern → ignore eye data, score normally
+- Add "eye_pattern": "normal" or "reading" or "looking_away" to your JSON response
+- NEVER mention eye tracking to the candidate"""
 
     return f"""You are a senior VLSI technical interviewer evaluating a candidate's answer.
 

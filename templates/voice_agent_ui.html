@@ -757,11 +757,18 @@
                             const lW = lMax - lMin;
                             const rW = rMax - rMin;
 
+                            // Also get Y position of iris (for vertical tracking)
+                            const liY = lm[468].y;
+                            const riY = lm[473].y;
+
                             if (lW > 0.002 && rW > 0.002) {
-                                // Where is iris within the eye? 0=left edge, 1=right edge
+                                // Horizontal gaze: 0=left, 1=right
                                 let lG = Math.max(0, Math.min(1, (liX - lMin) / lW));
                                 let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
                                 currentGaze = (lG + rG) / 2;
+
+                                // Vertical gaze: use raw Y average (0=top, 1=bottom in normalized coords)
+                                const gazeY = (liY + riY) / 2;
 
                                 // ── 1. EYES LOOKING AWAY (fixed gaze off-screen) ──
                                 if (currentGaze < 0.35 || currentGaze > 0.65) {
@@ -769,49 +776,64 @@
                                     eyeDirection = currentGaze < 0.35 ? 'left' : 'right';
                                 }
 
-                                // ── 2. READING DETECTION (movement-based) ──
-                                // Reading = high eye movement (lots of gaze changes)
-                                // Thinking = stable gaze (small random jitter)
-                                gazeHistory.push(currentGaze);
+                                // ── 2. READING DETECTION (X: left→right + Y: downward) ──
+                                // Track both X and Y over time
+                                gazeHistory.push({ x: currentGaze, y: gazeY });
                                 if (gazeHistory.length > GAZE_HISTORY_SIZE) gazeHistory.shift();
 
                                 if (gazeHistory.length >= 6) {
-                                    // Calculate total distance traveled by gaze
-                                    let totalMovement = 0;
-                                    let directionChanges = 0;
+                                    // Detect reading pattern:
+                                    // Reading = eyes move left→right (X increases), then snap back left
+                                    //           AND eyes gradually move downward (Y increases)
+                                    //
+                                    // Line 1:  →→→→→  (X: 0.35 → 0.55)
+                                    //          ↓ snap back + down
+                                    // Line 2:  →→→→→  (X: 0.35 → 0.55)
+                                    //          ↓ snap back + down
+                                    // Line 3:  →→→→→
+
+                                    let xSnapBacks = 0;     // X goes right then snaps left (end of line)
+                                    let yDownward = 0;      // Y moves downward (next line)
+                                    let xRightMoves = 0;    // X moves rightward (reading along line)
+
                                     for (let i = 1; i < gazeHistory.length; i++) {
-                                        const delta = Math.abs(gazeHistory[i] - gazeHistory[i-1]);
-                                        totalMovement += delta;
-                                        // Count direction changes
-                                        if (i >= 2) {
-                                            const prev = gazeHistory[i-1] - gazeHistory[i-2];
-                                            const curr = gazeHistory[i] - gazeHistory[i-1];
-                                            if (prev * curr < 0 && Math.abs(curr) > 0.01) {
-                                                directionChanges++;
-                                            }
-                                        }
+                                        const dx = gazeHistory[i].x - gazeHistory[i-1].x;
+                                        const dy = gazeHistory[i].y - gazeHistory[i-1].y;
+
+                                        // X moving right (reading along a line)
+                                        if (dx > 0.02) xRightMoves++;
+
+                                        // X snapping back left (going to next line)
+                                        if (dx < -0.03) xSnapBacks++;
+
+                                        // Y moving down (progressing through text)
+                                        if (dy > 0.002) yDownward++;
                                     }
 
-                                    // Calculate variance (spread of gaze positions)
-                                    const avg = gazeHistory.reduce((a,b) => a+b, 0) / gazeHistory.length;
-                                    const variance = gazeHistory.reduce((s,g) => s + (g-avg)*(g-avg), 0) / gazeHistory.length;
+                                    // Reading pattern confirmed when:
+                                    // - Multiple rightward X movements (reading lines)
+                                    // - At least 1 snap-back (went to next line)
+                                    // - Some downward Y movement (scrolling through text)
+                                    const isReadingPattern = xRightMoves >= 2 && xSnapBacks >= 1 && yDownward >= 1;
 
-                                    // Reading indicators:
-                                    // - Total movement > 0.15 (eyes traveling a lot)
-                                    // - Direction changes > 2 (eyes going back and forth)
-                                    // - Variance > 0.002 (gaze spread out, not stable)
-                                    const isReading = totalMovement > 0.15 && directionChanges >= 2 && variance > 0.002;
+                                    // Also check simple high movement as fallback
+                                    let totalXMovement = 0;
+                                    for (let i = 1; i < gazeHistory.length; i++) {
+                                        totalXMovement += Math.abs(gazeHistory[i].x - gazeHistory[i-1].x);
+                                    }
+                                    const highMovement = totalXMovement > 0.15;
+
+                                    const isReading = isReadingPattern || (highMovement && xSnapBacks >= 2);
 
                                     if (isReading) {
                                         readingFlagCount++;
-                                        console.log(`[EyeGaze] Reading activity #${readingFlagCount} | move=${totalMovement.toFixed(3)} dirChanges=${directionChanges} var=${variance.toFixed(4)} | [${gazeHistory.map(g=>g.toFixed(2)).join(',')}]`);
+                                        console.log(`[EyeGaze] READING #${readingFlagCount} | rightMoves=${xRightMoves} snapBacks=${xSnapBacks} downward=${yDownward} xMove=${totalXMovement.toFixed(3)} | pattern=${isReadingPattern}`);
 
                                         if (readingFlagCount >= READING_FLAG_THRESHOLD) {
                                             scanning = true;
                                             gazeHistory = [];
                                         }
                                     } else {
-                                        // Decay flag count slowly (forgive occasional movement)
                                         if (readingFlagCount > 0 && gazeHistory.length >= GAZE_HISTORY_SIZE) {
                                             readingFlagCount = Math.max(0, readingFlagCount - 1);
                                         }
@@ -823,7 +845,7 @@
                         // Iris landmarks not available — skip eye detection silently
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, eyeScanning: scanning };
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, gazeY: typeof gazeY !== 'undefined' ? gazeY : 0, eyeScanning: scanning };
                 });
 
                 mediapipeReady = true;
@@ -883,7 +905,7 @@
 
             // --- Collect eye data during answering (sent to LLM with the answer) ---
             if (isAnswering && present && latestResult.gazeX >= 0 && latestResult.gazeX <= 1) {
-                answerGazeData.push(latestResult.gazeX);
+                answerGazeData.push({ x: latestResult.gazeX, y: latestResult.gazeY || 0 });
                 if (eyeReading) answerEyeAwayCount++;
             }
 
@@ -1548,11 +1570,12 @@
 
             document.getElementById('sub-label').textContent = 'sending answer...';
 
-            // Send raw gaze pattern to LLM — let it decide if user is reading
-            let eyeSummary = { gaze_pattern: [], samples: 0, eyes_away_count: 0 };
+            // Send raw gaze pattern (X + Y) to LLM — let it decide if user is reading
+            let eyeSummary = { gaze_pattern_x: [], gaze_pattern_y: [], samples: 0, eyes_away_count: 0 };
             if (answerGazeData.length >= 3) {
                 eyeSummary = {
-                    gaze_pattern: answerGazeData.map(g => Math.round(g * 100) / 100),
+                    gaze_pattern_x: answerGazeData.map(g => Math.round(g.x * 100) / 100),
+                    gaze_pattern_y: answerGazeData.map(g => Math.round(g.y * 1000) / 1000),
                     samples: answerGazeData.length,
                     eyes_away_count: answerEyeAwayCount
                 };
