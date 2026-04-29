@@ -301,64 +301,110 @@ async function checkGaze() {
 
     document.getElementById('data-points').textContent = gazeHistory.length;
 
-    // ═══ READING DETECTION ═══
+    // ═══ READING PATTERN DETECTION ═══
+    // A reading cycle = smooth right sweep → sharp snap-back left → Y drops at snap-back
+    // Need 3+ complete cycles sustained over 15-20 seconds
     if (gazeHistory.length >= 10) {
-        // Count X sweeps: left→right movement followed by snap back left
-        let xSweeps = 0;
+
+        // ── Step 1: Detect complete reading cycles ──
+        // A cycle: X gradually increases (smooth sweep right)
+        //          then X suddenly drops (sharp snap-back to start of next line)
+        //          and Y increases slightly at the snap-back (moved to next line)
+        let completeCycles = 0;
         let sweeping = false;
         let sweepStartX = gazeHistory[0].x;
+        let sweepStartY = gazeHistory[0].y;
         let maxXInSweep = sweepStartX;
+        let smoothRightCount = 0;  // How many smooth rightward steps in current sweep
 
         for (let i = 1; i < gazeHistory.length; i++) {
             const dx = gazeHistory[i].x - gazeHistory[i - 1].x;
+            const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
 
             if (!sweeping) {
-                if (dx > 0.015) {
+                // Looking for start of a rightward sweep
+                if (dx > 0.008) {
                     sweeping = true;
                     sweepStartX = gazeHistory[i - 1].x;
+                    sweepStartY = gazeHistory[i - 1].y;
                     maxXInSweep = gazeHistory[i].x;
+                    smoothRightCount = 1;
                 }
             } else {
+                // Currently in a rightward sweep
                 if (gazeHistory[i].x > maxXInSweep) maxXInSweep = gazeHistory[i].x;
-                // Snap back left = end of line
-                if (dx < -0.02) {
+
+                if (dx > 0.005) {
+                    smoothRightCount++;  // Still moving right smoothly
+                }
+
+                // Check for SHARP snap-back left (end of line)
+                if (dx < -0.015) {
                     const sweepSize = maxXInSweep - sweepStartX;
-                    if (sweepSize > 0.03) xSweeps++;
+                    const yChange = gazeHistory[i].y - sweepStartY;
+
+                    // Valid reading cycle:
+                    // 1. Sweep was smooth (2+ rightward steps, not just a jump)
+                    // 2. Sweep covered enough horizontal distance
+                    // 3. Y went slightly downward during/after the sweep (next line)
+                    if (smoothRightCount >= 2 && sweepSize > 0.02 && yChange > -0.01) {
+                        completeCycles++;
+                        addLog(`Cycle #${completeCycles}: sweep=${(sweepSize*100).toFixed(1)}% right (${smoothRightCount} steps), Y change=${(yChange*100).toFixed(2)}%`, 'sweep-log');
+                    }
                     sweeping = false;
+                    smoothRightCount = 0;
+                }
+
+                // If X reverses slightly but not a sharp snap-back, could be a pause in reading
+                // Allow small backwards movement without breaking the sweep
+                if (dx < -0.025) {
+                    // Big jump left without enough sweep = not reading, just random movement
+                    sweeping = false;
+                    smoothRightCount = 0;
                 }
             }
         }
-        // Count unfinished sweep too
-        if (sweeping && (maxXInSweep - sweepStartX) > 0.03) xSweeps++;
 
-        // Count Y downward movements
-        let yDownCount = 0;
-        for (let i = 1; i < gazeHistory.length; i++) {
-            const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
-            if (dy > 0.002) yDownCount++;
-        }
-
-        // Check overall Y trend (first Y vs last Y)
+        // ── Step 2: Check overall Y trend ──
         const firstY = gazeHistory[0].y;
         const lastY = gazeHistory[gazeHistory.length - 1].y;
-        const yTrend = lastY - firstY;  // positive = went downward
+        const yTrend = lastY - firstY;  // positive = went downward overall
 
-        document.getElementById('sweep-count').textContent = xSweeps;
-        document.getElementById('ydown-count').textContent = yDownCount;
+        // Count how many times Y moved downward (should be consistent for reading)
+        let yDownCount = 0;
+        let yUpCount = 0;
+        for (let i = 1; i < gazeHistory.length; i++) {
+            const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
+            if (dy > 0.001) yDownCount++;
+            if (dy < -0.001) yUpCount++;
+        }
+        // Y should go down more than up when reading (scrolling through text)
+        const yConsistentlyDown = yDownCount > yUpCount && yTrend > 0.003;
 
-        // READING = X sweeps enough + Y going down + sustained
-        const isReading = xSweeps >= xSweepThreshold && yDownCount >= yDownThreshold && yTrend > 0.005;
+        document.getElementById('sweep-count').textContent = completeCycles;
+        document.getElementById('ydown-count').textContent = yDownCount + '/' + (yDownCount + yUpCount);
+
+        // ── Step 3: Final reading decision ──
+        // READING = 3+ complete cycles + Y consistently going down + sustained window
+        const isReading = completeCycles >= xSweepThreshold && yConsistentlyDown;
+
+        // Also check: NOT reading if pattern is random (thinking)
+        // Thinking = high X variance but no smooth sweeps, no Y trend
+        const isThinking = completeCycles < 2 && !yConsistentlyDown;
 
         const statusEl = document.getElementById('reading-status');
         if (isReading) {
             totalReadings++;
             document.getElementById('total-readings').textContent = totalReadings;
             statusEl.className = 'reading-status reading';
-            statusEl.textContent = `READING DETECTED — ${xSweeps} sweeps, ${yDownCount} Y-drops, Y trend: +${(yTrend * 100).toFixed(1)}%`;
-            addLog(`READING: sweeps=${xSweeps} yDown=${yDownCount} yTrend=+${(yTrend * 100).toFixed(1)}%`, 'reading-log');
-        } else if (xSweeps >= 2 || yDownCount >= 2) {
+            statusEl.textContent = `READING DETECTED — ${completeCycles} cycles, Y trend: +${(yTrend * 100).toFixed(1)}%, Y down ${yDownCount}/${yDownCount+yUpCount}`;
+            addLog(`READING CONFIRMED: ${completeCycles} complete read-line cycles | Y trend +${(yTrend*100).toFixed(1)}% | sustained ${((gazeHistory.length * checkInterval)/1000).toFixed(0)}s`, 'reading-log');
+        } else if (completeCycles >= 1 || (yConsistentlyDown && completeCycles >= 1)) {
             statusEl.className = 'reading-status warning';
-            statusEl.textContent = `Monitoring — ${xSweeps} sweeps, ${yDownCount} Y-drops`;
+            statusEl.textContent = `Monitoring — ${completeCycles} cycles, Y down: ${yDownCount}/${yDownCount+yUpCount}`;
+        } else if (isThinking) {
+            statusEl.className = 'reading-status normal';
+            statusEl.textContent = `NORMAL — Thinking (random movement, no pattern)`;
         } else {
             statusEl.className = 'reading-status normal';
             statusEl.textContent = 'NORMAL — Eyes stable';

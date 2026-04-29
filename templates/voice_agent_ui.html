@@ -574,9 +574,17 @@
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
+        // Reading pattern detection (X: smooth right sweep + sharp snap-back + Y: drops at snap-backs)
+        let gazeXYHistory = [];            // Rolling buffer of {x, y}
+        const READING_WINDOW = 20;         // 20 data points analyzed
+        const READING_CHECK_INTERVAL = 500; // Check gaze every 500ms for reading (faster than main 1500ms)
+        let readingCheckTimer = null;
+        let readingCycleCount = 0;         // How many complete read-line cycles detected
+        let readingWarnings = 0;
+        const READING_CYCLES_NEEDED = 3;   // Need 3+ complete cycles to confirm reading
 
         // Latest detection result (set by MediaPipe callback)
-        let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
+        let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, gazeY: 0.5, eyeScanning: false };
 
         // Warning overlay for camera (face not detected)
         // Shared warning popup style
