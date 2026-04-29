@@ -750,9 +750,9 @@
                                 }
 
                                 // Eyes looking away — horizontal
-                                if (currentGaze < 0.38 || currentGaze > 0.55) {
+                                if (currentGaze < 0.40 || currentGaze > 0.55) {
                                     eyeReading = true;
-                                    eyeDirection = currentGaze < 0.38 ? 'left' : 'right';
+                                    eyeDirection = currentGaze < 0.40 ? 'left' : 'right';
                                 }
                                 // Eyes looking up (above laptop — e.g. notes on wall, person behind)
                                 else if (gazeY < 0.25) {
