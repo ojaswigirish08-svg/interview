@@ -305,25 +305,6 @@ except ImportError:
 except Exception as e:
     print(f"Pocket TTS failed: {e}")
 
-# L2CS-Net gaze estimation (optional)
-gaze_pipeline = None
-try:
-    from l2cs import Pipeline
-    import torch, pathlib
-    _gaze_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    gaze_pipeline = Pipeline(
-        weights=pathlib.Path(__file__).parent / "models" / "L2CSNet_gaze360.pkl",
-        arch='ResNet50',
-        device=_gaze_device
-    )
-    print(f"L2CS-Net gaze estimation ready (device: {_gaze_device}).")
-except ImportError:
-    print("L2CS-Net not installed. pip install l2cs torch torchvision")
-except FileNotFoundError:
-    print("L2CS-Net weights not found. Download L2CSNet_gaze360.pkl to models/ folder.")
-except Exception as e:
-    print(f"L2CS-Net failed to load: {e}")
-
 
 # ════════════════════════════════════════════════════════════
 # DOMAIN KNOWLEDGE
@@ -1559,54 +1540,6 @@ async def end_session(data: dict):
     if not session: raise HTTPException(404, "Session not found")
     session["phase"] = "ended"
     return JSONResponse({"ok": True})
-
-@app.post("/api/gaze-check")
-async def gaze_check(file: UploadFile = File(...), session_id: str = Form("")):
-    """Receive a video frame, run L2CS-Net, return gaze angles."""
-    if not gaze_pipeline:
-        return JSONResponse({"error": "L2CS-Net not available", "yaw": 0, "pitch": 0, "looking": "unknown"})
-
-    import asyncio, cv2, numpy as np
-    img_bytes = await file.read()
-    if len(img_bytes) < 500:
-        return JSONResponse({"yaw": 0, "pitch": 0, "looking": "no_frame"})
-
-    def _run_gaze():
-        # Decode JPEG frame
-        arr = np.frombuffer(img_bytes, np.uint8)
-        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return {"yaw": 0, "pitch": 0, "looking": "decode_error"}
-
-        # Run L2CS-Net
-        results = gaze_pipeline.step(frame)
-
-        if results is None or len(results.yaw) == 0:
-            return {"yaw": 0, "pitch": 0, "looking": "no_face"}
-
-        # Get first face's gaze angles (in degrees)
-        yaw = float(results.yaw[0])     # left/right: negative=left, positive=right
-        pitch = float(results.pitch[0]) # up/down: negative=up, positive=down
-
-        # Classify gaze direction
-        if abs(yaw) < 10 and abs(pitch) < 10:
-            looking = "center"
-        elif yaw < -15:
-            looking = "left"
-        elif yaw > 15:
-            looking = "right"
-        elif pitch > 15:
-            looking = "down"
-        elif pitch < -15:
-            looking = "up"
-        else:
-            looking = "slight_off"
-
-        return {"yaw": round(yaw, 1), "pitch": round(pitch, 1), "looking": looking}
-
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(None, _run_gaze)
-    return JSONResponse(result)
 
 @app.post("/api/anticheat-event")
 async def anticheat_event(data: AntiCheatEvent):

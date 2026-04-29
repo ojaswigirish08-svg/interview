@@ -574,15 +574,6 @@
         let eyeReadWarnings = 0;
         const EYE_READ_LIMIT = 3;         // 3 consecutive checks (~4.5 seconds) = 1 warning
 
-        // L2CS-Net server-side gaze (more accurate than iris landmarks)
-        let l2csAvailable = false;
-        let l2csCheckCount = 0;
-        const L2CS_CHECK_EVERY = 2;       // Send frame every 2nd check (~3 seconds)
-        let l2csGaze = { yaw: 0, pitch: 0, looking: 'unknown' };
-        const gazeCanvas = document.createElement('canvas');
-        gazeCanvas.width = 320;
-        gazeCanvas.height = 240;
-        const gazeCtx = gazeCanvas.getContext('2d');
 
         // Latest detection result (set by MediaPipe callback)
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
@@ -884,52 +875,6 @@
                 }
             } else if (present && !eyeReading) {
                 eyeReadCount = 0;
-            }
-
-            // --- L2CS-Net server-side gaze check (every 2nd cycle = ~3 seconds) ---
-            if (isAnswering && present && !headTurned) {
-                l2csCheckCount++;
-                if (l2csCheckCount >= L2CS_CHECK_EVERY) {
-                    l2csCheckCount = 0;
-                    // Capture frame and send to server (non-blocking)
-                    try {
-                        if (video.srcObject && video.readyState >= 2) {
-                            gazeCtx.drawImage(video, 0, 0, gazeCanvas.width, gazeCanvas.height);
-                            gazeCanvas.toBlob(async (blob) => {
-                                if (!blob || interviewEnded) return;
-                                try {
-                                    const form = new FormData();
-                                    form.append('file', blob, 'frame.jpg');
-                                    form.append('session_id', sessionId || '');
-                                    const resp = await fetch('/api/gaze-check', { method: 'POST', body: form });
-                                    const data = await resp.json();
-                                    if (data.looking !== 'unknown' && data.looking !== 'decode_error') {
-                                        l2csAvailable = true;
-                                        l2csGaze = data;
-                                        // Log gaze result
-                                        console.log(`[L2CS] yaw=${data.yaw}° pitch=${data.pitch}° → ${data.looking}`);
-                                        // Send anticheat if looking away significantly
-                                        if (data.looking === 'left' || data.looking === 'right' || data.looking === 'down') {
-                                            sendAntiCheat('l2cs_gaze_away', `yaw:${data.yaw},pitch:${data.pitch},looking:${data.looking}`);
-                                        }
-                                    }
-                                } catch(e) { /* server gaze not available — ignore */ }
-                            }, 'image/jpeg', 0.6);
-                        }
-                    } catch(e) {}
-                }
-            }
-
-            // Update PIP status with L2CS data if available
-            if (l2csAvailable && isAnswering && present && !headTurned && !eyeReading) {
-                const g = l2csGaze;
-                if (g.looking === 'left' || g.looking === 'right' || g.looking === 'down') {
-                    faceStatus.textContent = `GAZE ${g.looking.toUpperCase()} (${g.yaw}°)`;
-                    faceStatus.style.color = '#fa0';
-                } else {
-                    faceStatus.textContent = `gaze OK (${g.yaw}°, ${g.pitch}°)`;
-                    faceStatus.style.color = '#4f4';
-                }
             }
 
             detecting = false;
