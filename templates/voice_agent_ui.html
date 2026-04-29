@@ -728,14 +728,36 @@
                             const rW = rMax - rMin;
 
                             if (lW > 0.002 && rW > 0.002) {
+                                // Horizontal gaze
                                 let lG = Math.max(0, Math.min(1, (liX - lMin) / lW));
                                 let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
                                 currentGaze = (lG + rG) / 2;
 
-                                // Eyes looking away (fixed gaze off-screen)
+                                // Vertical gaze — iris Y relative to eye top/bottom
+                                const liY = lm[468].y;
+                                const riY = lm[473].y;
+                                const leftEyeTop = lm[159].y;    // left eye upper lid
+                                const leftEyeBot = lm[145].y;    // left eye lower lid
+                                const rightEyeTop = lm[386].y;   // right eye upper lid
+                                const rightEyeBot = lm[374].y;   // right eye lower lid
+                                const lEyeH = Math.abs(leftEyeBot - leftEyeTop);
+                                const rEyeH = Math.abs(rightEyeBot - rightEyeTop);
+                                let gazeY = 0.5;
+                                if (lEyeH > 0.002 && rEyeH > 0.002) {
+                                    const lVG = (liY - Math.min(leftEyeTop, leftEyeBot)) / lEyeH;
+                                    const rVG = (riY - Math.min(rightEyeTop, rightEyeBot)) / rEyeH;
+                                    gazeY = Math.max(0, Math.min(1, (lVG + rVG) / 2));
+                                }
+
+                                // Eyes looking away — horizontal
                                 if (currentGaze < 0.38 || currentGaze > 0.55) {
                                     eyeReading = true;
                                     eyeDirection = currentGaze < 0.38 ? 'left' : 'right';
+                                }
+                                // Eyes looking up (above laptop — e.g. notes on wall, person behind)
+                                else if (gazeY < 0.25) {
+                                    eyeReading = true;
+                                    eyeDirection = 'up';
                                 }
                             }
                         }
