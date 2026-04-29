@@ -765,7 +765,7 @@
                         // Iris landmarks not available — skip eye detection silently
                     }
 
-                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, eyeScanning: false };
+                    latestResult = { present: true, headTurned: turned, direction: direction, eyeReading: eyeReading, eyeDirection: eyeDirection, gazeX: currentGaze, gazeY: typeof gazeY !== 'undefined' ? gazeY : 0.5, eyeScanning: false };
                 });
 
                 mediapipeReady = true;
@@ -810,10 +810,10 @@
                 faceStatus.textContent = 'EYES ' + eyeDirection + '!';
                 faceStatus.style.color = '#fa0';
             } else {
-                // Show live gaze value — gazeX is -1 when no face, 0.5 default when no iris
                 const gx = latestResult.gazeX;
+                const gy = latestResult.gazeY;
                 const irisOk = typeof gx === 'number' && gx >= 0 && gx <= 1;
-                faceStatus.textContent = irisOk ? ('gaze ' + gx.toFixed(2)) : 'face OK (no iris)';
+                faceStatus.textContent = irisOk ? ('X:' + gx.toFixed(2) + ' Y:' + (typeof gy === 'number' ? gy.toFixed(2) : '?')) : 'face OK (no iris)';
                 faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
             }
 
