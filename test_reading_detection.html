@@ -3,255 +3,245 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Eye Reading Detection — Test</title>
+<title>Reading Detection Test — With Interview Questions</title>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; padding: 20px; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; min-height: 100vh; }
 
-    .layout { display: grid; grid-template-columns: 320px 1fr; gap: 20px; max-width: 1100px; margin: 0 auto; }
+    .shell { display: grid; grid-template-columns: 280px 1fr; height: 100vh; overflow: hidden; }
 
-    /* Camera panel */
-    .cam-panel { display: flex; flex-direction: column; gap: 12px; }
-    .cam-box { position: relative; border-radius: 12px; overflow: hidden; background: #1a1a1a; border: 1px solid #333; }
+    /* Sidebar */
+    .sidebar { background: #111; border-right: 1px solid #222; display: flex; flex-direction: column; overflow-y: auto; }
+    .sb-header { padding: 16px; border-bottom: 1px solid #222; }
+    .sb-header h1 { font-size: 15px; color: #fff; margin-bottom: 4px; }
+    .sb-header p { font-size: 11px; color: #555; }
+
+    .cam-box { margin: 12px; position: relative; border-radius: 10px; overflow: hidden; background: #000; border: 1px solid #333; }
     .cam-box video { width: 100%; display: block; transform: scaleX(-1); }
-    .cam-status { position: absolute; bottom: 0; left: 0; right: 0; padding: 6px 10px; background: rgba(0,0,0,0.7); font-size: 12px; font-family: monospace; text-align: center; }
+    .cam-status { position: absolute; bottom: 0; left: 0; right: 0; padding: 4px 8px; background: rgba(0,0,0,0.7); font-size: 10px; font-family: monospace; text-align: center; }
 
-    /* Controls */
-    .controls { display: flex; flex-direction: column; gap: 8px; }
-    .ctrl-row { display: flex; align-items: center; gap: 10px; }
-    .ctrl-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 1px; min-width: 120px; }
-    .ctrl-val { font-size: 13px; font-family: monospace; color: #4ade80; }
-    input[type="range"] { flex: 1; accent-color: #4ade80; }
+    .gaze-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-bottom: 12px; }
+    .gaze-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; text-align: center; }
+    .gaze-val { font-size: 18px; font-weight: 700; font-family: monospace; }
+    .gaze-label { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px; }
 
-    /* Data panel */
-    .data-panel { display: flex; flex-direction: column; gap: 16px; }
+    .chart-box { margin: 0 12px 12px; background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 8px; }
+    .chart-box h3 { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+    canvas { width: 100%; height: 100px; display: block; }
 
-    h1 { font-size: 20px; font-weight: 600; color: #fff; margin-bottom: 4px; }
-    h2 { font-size: 14px; font-weight: 600; color: #888; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
-
-    /* Gaze display */
-    .gaze-display { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-    .gaze-card { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 14px; text-align: center; }
-    .gaze-val { font-size: 28px; font-weight: 700; font-family: monospace; letter-spacing: -1px; }
-    .gaze-label { font-size: 10px; color: #666; margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
-
-    /* Chart area */
-    .chart-box { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 16px; }
-    canvas { width: 100%; height: 150px; display: block; border-radius: 6px; }
-
-    /* Reading status */
-    .reading-status { padding: 16px; border-radius: 10px; font-size: 16px; font-weight: 600; text-align: center; transition: all 0.3s; }
-    .reading-status.normal { background: #052e16; border: 1px solid #16a34a; color: #4ade80; }
-    .reading-status.warning { background: #422006; border: 1px solid #d97706; color: #fbbf24; }
-    .reading-status.reading { background: #450a0a; border: 1px solid #dc2626; color: #f87171; animation: pulse 1s infinite; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
-
-    /* Log */
-    .log-box { background: #111; border: 1px solid #333; border-radius: 10px; padding: 12px; max-height: 200px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #888; }
-    .log-box div { padding: 2px 0; border-bottom: 1px solid #1a1a1a; }
+    .log-box { margin: 0 12px 12px; background: #0d0d0d; border: 1px solid #222; border-radius: 8px; padding: 8px; max-height: 150px; overflow-y: auto; font-family: monospace; font-size: 10px; color: #555; }
+    .log-box div { padding: 1px 0; }
     .log-box .reading-log { color: #f87171; font-weight: 600; }
     .log-box .sweep-log { color: #fbbf24; }
+    .log-box .question-log { color: #60a5fa; }
+
+    /* Main panel */
+    .main { display: flex; flex-direction: column; }
+
+    .topbar { height: 50px; border-bottom: 1px solid #222; display: flex; align-items: center; padding: 0 20px; gap: 12px; background: #111; }
+    .topbar-title { font-size: 13px; font-weight: 500; flex: 1; }
+    .status-badge { font-size: 10px; padding: 4px 10px; border-radius: 20px; font-family: monospace; font-weight: 600; }
+    .badge-idle { background: #1a1a1a; color: #555; border: 1px solid #333; }
+    .badge-speaking { background: #1e3a5f; color: #60a5fa; border: 1px solid #2563eb; }
+    .badge-listening { background: #052e16; color: #4ade80; border: 1px solid #16a34a; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.5} }
+
+    .main-body { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; gap: 20px; }
+
+    /* Question card */
+    .q-card { width: 100%; max-width: 600px; background: #1a1a1a; border: 1px solid #333; border-radius: 14px; padding: 24px; }
+    .q-num { font-size: 10px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; font-family: monospace; }
+    .q-text { font-size: 16px; color: #fff; line-height: 1.6; font-weight: 400; }
+
+    /* Reading status */
+    .reading-bar { width: 100%; max-width: 600px; padding: 14px 20px; border-radius: 10px; text-align: center; font-size: 14px; font-weight: 600; transition: all 0.3s; }
+    .reading-bar.normal { background: #052e16; border: 1px solid #16a34a; color: #4ade80; }
+    .reading-bar.warning { background: #422006; border: 1px solid #d97706; color: #fbbf24; }
+    .reading-bar.reading { background: #450a0a; border: 1px solid #dc2626; color: #f87171; animation: pulse 1s infinite; }
+
+    /* Controls */
+    .controls-bar { border-top: 1px solid #222; padding: 12px 20px; display: flex; align-items: center; gap: 10px; background: #111; }
+    .ctrl-btn { padding: 8px 20px; border-radius: 8px; border: 1px solid #333; background: #1a1a1a; color: #fff; font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; transition: all 0.15s; }
+    .ctrl-btn:hover { background: #2a2a2a; }
+    .ctrl-btn.primary { background: #16a34a; border-color: #16a34a; }
+    .ctrl-btn.primary:hover { background: #15803d; }
+    .ctrl-btn.danger { background: #dc2626; border-color: #dc2626; }
+    .ctrl-btn.danger:hover { background: #b91c1c; }
+    .ctrl-info { flex: 1; font-size: 11px; color: #555; font-family: monospace; }
+
+    /* Settings */
+    .settings { padding: 12px; border-top: 1px solid #222; }
+    .settings h3 { font-size: 9px; color: #555; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .setting-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .setting-row label { font-size: 10px; color: #666; min-width: 80px; }
+    .setting-row input[type="range"] { flex: 1; accent-color: #4ade80; }
+    .setting-row span { font-size: 10px; color: #4ade80; font-family: monospace; min-width: 40px; }
 </style>
 </head>
 <body>
 
-<h1>Eye Reading Detection — Test Lab</h1>
-<p style="color:#666;font-size:13px;margin-bottom:16px;">Test reading detection without the interview. Look at text to trigger detection.</p>
+<div class="shell">
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sb-header">
+            <h1>Reading Detection Test</h1>
+            <p>Camera + Questions + Eye Tracking</p>
+        </div>
 
-<div class="layout">
-    <!-- Camera + Controls -->
-    <div class="cam-panel">
         <div class="cam-box">
             <video id="video" autoplay muted playsinline></video>
             <div class="cam-status" id="cam-status">loading...</div>
         </div>
 
-        <div class="controls">
-            <h2>Settings</h2>
-            <div class="ctrl-row">
-                <span class="ctrl-label">Check interval</span>
-                <input type="range" id="interval-slider" min="100" max="1500" value="500" oninput="updateInterval(this.value)">
-                <span class="ctrl-val" id="interval-val">500ms</span>
+        <div class="gaze-grid">
+            <div class="gaze-card">
+                <div class="gaze-val" id="gaze-x" style="color:#60a5fa;">--</div>
+                <div class="gaze-label">Gaze X</div>
             </div>
-            <div class="ctrl-row">
-                <span class="ctrl-label">Window size</span>
-                <input type="range" id="window-slider" min="10" max="40" value="20" oninput="updateWindow(this.value)">
-                <span class="ctrl-val" id="window-val">20 pts</span>
+            <div class="gaze-card">
+                <div class="gaze-val" id="gaze-y" style="color:#a78bfa;">--</div>
+                <div class="gaze-label">Gaze Y</div>
             </div>
-            <div class="ctrl-row">
-                <span class="ctrl-label">X sweep threshold</span>
-                <input type="range" id="xsweep-slider" min="1" max="8" value="3" oninput="updateXSweep(this.value)">
-                <span class="ctrl-val" id="xsweep-val">3 sweeps</span>
+            <div class="gaze-card">
+                <div class="gaze-val" id="cycle-count" style="color:#fbbf24;">0</div>
+                <div class="gaze-label">Cycles</div>
             </div>
-            <div class="ctrl-row">
-                <span class="ctrl-label">Y downward threshold</span>
-                <input type="range" id="ydown-slider" min="1" max="10" value="4" oninput="updateYDown(this.value)">
-                <span class="ctrl-val" id="ydown-val">4 drops</span>
-            </div>
-            <div style="margin-top:8px;">
-                <button onclick="resetHistory()" style="padding:8px 16px;background:#333;color:#fff;border:1px solid #555;border-radius:6px;cursor:pointer;font-size:12px;">Reset History</button>
+            <div class="gaze-card">
+                <div class="gaze-val" id="reading-count" style="color:#f87171;">0</div>
+                <div class="gaze-label">Readings</div>
             </div>
         </div>
 
-        <!-- Sample text for testing -->
-        <div style="background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:14px;">
-            <h2>Read This Text (to test detection)</h2>
-            <p style="font-size:12px;color:#aaa;line-height:1.8;">
-                Clock Tree Synthesis is a critical step in physical design flow. The primary goal is to distribute
-                the clock signal to all sequential elements with minimal skew. CTS involves inserting buffers and
-                inverters to balance the clock tree branches. The tool analyzes the clock network and creates a
-                balanced tree structure. Common issues include high skew between branches, excessive insertion
-                delay, and duty cycle distortion. After CTS, the designer must verify that both setup and hold
-                timing constraints are met across all corners. Hold violations are particularly common after CTS
-                because the clock network delay changes the timing relationship between sequential elements.
-                The designer must also consider on-chip variation effects on the clock tree performance.
-            </p>
-        </div>
-    </div>
-
-    <!-- Data panel -->
-    <div class="data-panel">
-        <!-- Gaze values -->
-        <div class="gaze-display">
-            <div class="gaze-card">
-                <div class="gaze-val" id="gaze-x" style="color:#60a5fa;">0.50</div>
-                <div class="gaze-label">Gaze X (L-R)</div>
-            </div>
-            <div class="gaze-card">
-                <div class="gaze-val" id="gaze-y" style="color:#a78bfa;">0.50</div>
-                <div class="gaze-label">Gaze Y (U-D)</div>
-            </div>
-            <div class="gaze-card">
-                <div class="gaze-val" id="sweep-count" style="color:#fbbf24;">0</div>
-                <div class="gaze-label">X Sweeps</div>
-            </div>
-            <div class="gaze-card">
-                <div class="gaze-val" id="ydown-count" style="color:#fb923c;">0</div>
-                <div class="gaze-label">Y Downward</div>
-            </div>
-        </div>
-
-        <!-- Reading status -->
-        <div class="reading-status normal" id="reading-status">
-            NORMAL — Eyes stable
-        </div>
-
-        <!-- X chart -->
         <div class="chart-box">
-            <h2>Gaze X (horizontal) — blue | Gaze Y (vertical) — purple</h2>
+            <h3>X (blue) | Y (purple)</h3>
             <canvas id="chart"></canvas>
         </div>
 
-        <!-- Detection info -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <div class="gaze-card">
-                <div class="gaze-val" id="total-readings" style="color:#f87171;">0</div>
-                <div class="gaze-label">Reading Detections</div>
+        <div class="settings">
+            <h3>Thresholds</h3>
+            <div class="setting-row">
+                <label>Interval</label>
+                <input type="range" id="s-interval" min="200" max="1000" value="500" oninput="SET.interval=+this.value;document.getElementById('v-interval').textContent=this.value+'ms';restartTimer()">
+                <span id="v-interval">500ms</span>
             </div>
-            <div class="gaze-card">
-                <div class="gaze-val" id="data-points" style="color:#4ade80;">0</div>
-                <div class="gaze-label">Data Points</div>
+            <div class="setting-row">
+                <label>Window</label>
+                <input type="range" id="s-window" min="10" max="40" value="20" oninput="SET.window=+this.value;document.getElementById('v-window').textContent=this.value">
+                <span id="v-window">20</span>
+            </div>
+            <div class="setting-row">
+                <label>Min cycles</label>
+                <input type="range" id="s-cycles" min="2" max="8" value="3" oninput="SET.minCycles=+this.value;document.getElementById('v-cycles').textContent=this.value">
+                <span id="v-cycles">3</span>
+            </div>
+            <div class="setting-row">
+                <label>Voice speed</label>
+                <input type="range" id="s-speed" min="80" max="150" value="120" oninput="SET.voiceSpeed=+this.value/100;document.getElementById('v-speed').textContent=(+this.value/100).toFixed(1)+'x'">
+                <span id="v-speed">1.2x</span>
             </div>
         </div>
 
-        <!-- Log -->
-        <div>
-            <h2>Detection Log</h2>
-            <div class="log-box" id="log-box">
-                <div>Waiting for MediaPipe to load...</div>
+        <div class="log-box" id="log-box">
+            <div>Waiting for camera...</div>
+        </div>
+    </div>
+
+    <!-- Main -->
+    <div class="main">
+        <div class="topbar">
+            <span class="topbar-title" id="topbar-title">Physical Design Interview — Reading Detection Test</span>
+            <span class="status-badge badge-idle" id="status-badge">idle</span>
+            <span style="font-size:11px;font-family:monospace;color:#555;" id="q-counter">Q0 / 10</span>
+        </div>
+
+        <div class="main-body">
+            <div class="q-card">
+                <div class="q-num" id="q-num">Press "Start Interview" to begin</div>
+                <div class="q-text" id="q-text">The system will ask Physical Design interview questions using voice. While you answer (or pretend to answer), the eye tracking will monitor for reading patterns.</div>
             </div>
+
+            <div class="reading-bar normal" id="reading-bar">NORMAL — Eyes stable</div>
+        </div>
+
+        <div class="controls-bar">
+            <button class="ctrl-btn primary" id="btn-start" onclick="startInterview()">Start Interview</button>
+            <button class="ctrl-btn" onclick="skipQuestion()">Skip Question</button>
+            <button class="ctrl-btn danger" onclick="stopInterview()">Stop</button>
+            <div class="ctrl-info" id="ctrl-info">10 predefined PD questions</div>
         </div>
     </div>
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════
-// STATE
-// ═══════════════════════════════════════════════════
-let faceMesh = null;
-let mediapipeReady = false;
-let checkInterval = 500;
-let windowSize = 20;
-let xSweepThreshold = 3;
-let yDownThreshold = 4;
-let gazeHistory = [];   // [{x, y, time}]
-let totalReadings = 0;
-let detecting = false;
-let timerHandle = null;
+// ═══════════════════════════════════════════
+// QUESTIONS
+// ═══════════════════════════════════════════
+const QUESTIONS = [
+    "What is clock tree synthesis, and why is it important in physical design?",
+    "Explain the difference between setup time violation and hold time violation.",
+    "You have a setup violation with negative slack of 150 picoseconds. What are the first three things you would do to fix it?",
+    "What is IR drop, and how does it affect timing in a design?",
+    "Describe the floorplanning process. What are the key objectives when placing macros?",
+    "What happens to timing when you increase the utilization from 65% to 85%? Why?",
+    "After CTS, you see 200 picoseconds of skew on one clock branch. What could be causing this?",
+    "Explain the difference between global routing and detailed routing. What problems can occur in each?",
+    "What is crosstalk, and how can it cause both setup and hold violations?",
+    "A hold violation of 50 picoseconds appears after adding buffers. What went wrong, and what is the correct fix?"
+];
 
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+const SET = { interval: 500, window: 20, minCycles: 3, voiceSpeed: 1.2 };
+let faceMesh = null, mediapipeReady = false, detecting = false;
+let gazeHistory = [], totalReadings = 0;
+let currentQ = -1, interviewActive = false, phase = 'idle'; // idle | speaking | listening
+let gazeTimer = null;
+let latestGaze = { x: 0.5, y: 0.5, valid: false };
 const video = document.getElementById('video');
 const camStatus = document.getElementById('cam-status');
 const chart = document.getElementById('chart');
-const ctx = chart.getContext('2d');
+const chartCtx = chart.getContext('2d');
 
-// Latest gaze from MediaPipe callback
-let latestGaze = { x: 0.5, y: 0.5, valid: false };
-
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════
 // CAMERA
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════
 navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' }, audio: false })
     .then(stream => { video.srcObject = stream; })
-    .catch(() => { camStatus.textContent = 'Camera access denied'; });
+    .catch(() => { camStatus.textContent = 'Camera denied'; });
 
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════
 // MEDIAPIPE
-// ═══════════════════════════════════════════════════
-async function initMediaPipe() {
+// ═══════════════════════════════════════════
+(async function() {
     try {
         camStatus.textContent = 'Loading MediaPipe...';
         faceMesh = new FaceMesh({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`
         });
-        faceMesh.setOptions({
-            maxNumFaces: 1,
-            refineLandmarks: true,
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
-        });
+        faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
 
         faceMesh.onResults((results) => {
             if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-                latestGaze = { x: 0.5, y: 0.5, valid: false };
-                return;
+                latestGaze = { x: 0.5, y: 0.5, valid: false }; return;
             }
-
             const lm = results.multiFaceLandmarks[0];
-
-            // Head turn check
-            const noseTip = lm[1];
-            const leftEdge = lm[234];
-            const rightEdge = lm[454];
+            const noseTip = lm[1], leftEdge = lm[234], rightEdge = lm[454];
             const faceWidth = rightEdge.x - leftEdge.x;
             if (faceWidth < 0.05) { latestGaze = { x: 0.5, y: 0.5, valid: false }; return; }
             const nosePos = (noseTip.x - leftEdge.x) / faceWidth;
-            const headTurned = nosePos < 0.30 || nosePos > 0.70;
-            if (headTurned) { latestGaze = { x: 0.5, y: 0.5, valid: false }; return; }
+            if (nosePos < 0.30 || nosePos > 0.70) { latestGaze = { x: 0.5, y: 0.5, valid: false }; return; }
 
-            // Iris gaze X
             if (!lm[468] || !lm[473]) { latestGaze = { x: 0.5, y: 0.5, valid: false }; return; }
-            const liX = lm[468].x, riX = lm[473].x;
-            const l1 = lm[33].x, l2 = lm[133].x;
-            const r1 = lm[263].x, r2 = lm[362].x;
-            const lMin = Math.min(l1, l2), lMax = Math.max(l1, l2);
-            const rMin = Math.min(r1, r2), rMax = Math.max(r1, r2);
-            const lW = lMax - lMin, rW = rMax - rMin;
-
+            const l1 = lm[33].x, l2 = lm[133].x, r1 = lm[263].x, r2 = lm[362].x;
+            const lMin = Math.min(l1,l2), lMax = Math.max(l1,l2), rMin = Math.min(r1,r2), rMax = Math.max(r1,r2);
+            const lW = lMax-lMin, rW = rMax-rMin;
             if (lW < 0.002 || rW < 0.002) { latestGaze = { x: 0.5, y: 0.5, valid: false }; return; }
 
-            let lG = Math.max(0, Math.min(1, (liX - lMin) / lW));
-            let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
-            const gazeX = (lG + rG) / 2;
-
-            // Gaze Y — nose position relative to face height
-            const faceTop = lm[10].y;
-            const faceBot = lm[152].y;
-            const faceHeight = Math.abs(faceBot - faceTop);
-            let gazeY = 0.5;
-            if (faceHeight > 0.05) {
-                gazeY = Math.max(0, Math.min(1, (noseTip.y - Math.min(faceTop, faceBot)) / faceHeight));
-            }
+            const gazeX = (Math.max(0,Math.min(1,(lm[468].x-lMin)/lW)) + Math.max(0,Math.min(1,(lm[473].x-rMin)/rW))) / 2;
+            const faceTop = lm[10].y, faceBot = lm[152].y, fH = Math.abs(faceBot-faceTop);
+            const gazeY = fH > 0.05 ? Math.max(0,Math.min(1,(noseTip.y-Math.min(faceTop,faceBot))/fH)) : 0.5;
 
             latestGaze = { x: gazeX, y: gazeY, valid: true };
         });
@@ -259,255 +249,256 @@ async function initMediaPipe() {
         mediapipeReady = true;
         camStatus.textContent = 'MediaPipe ready';
         camStatus.style.color = '#4ade80';
-        addLog('MediaPipe Face Mesh loaded — iris tracking active');
-        startChecking();
-    } catch (e) {
-        camStatus.textContent = 'MediaPipe failed: ' + e.message;
+        addLog('MediaPipe loaded — iris tracking active');
+    } catch(e) {
+        camStatus.textContent = 'Failed: ' + e.message;
         camStatus.style.color = '#f87171';
     }
-}
-initMediaPipe();
+})();
 
-// ═══════════════════════════════════════════════════
-// MAIN CHECK LOOP
-// ═══════════════════════════════════════════════════
-function startChecking() {
-    if (timerHandle) clearInterval(timerHandle);
-    timerHandle = setInterval(checkGaze, checkInterval);
+// ═══════════════════════════════════════════
+// INTERVIEW FLOW
+// ═══════════════════════════════════════════
+function startInterview() {
+    if (!mediapipeReady) { alert('Wait for MediaPipe to load'); return; }
+    interviewActive = true;
+    currentQ = -1;
+    totalReadings = 0;
+    document.getElementById('reading-count').textContent = '0';
+    document.getElementById('btn-start').disabled = true;
+    addLog('Interview started', 'question-log');
+    nextQuestion();
+}
+
+function stopInterview() {
+    interviewActive = false;
+    phase = 'idle';
+    if (gazeTimer) clearInterval(gazeTimer);
+    speechSynthesis.cancel();
+    setPhaseUI('idle');
+    document.getElementById('q-text').textContent = `Interview stopped. ${totalReadings} reading detections in ${currentQ + 1} questions.`;
+    document.getElementById('q-num').textContent = 'Finished';
+    document.getElementById('btn-start').disabled = false;
+    addLog(`Interview stopped — ${totalReadings} readings detected`, 'question-log');
+}
+
+function nextQuestion() {
+    currentQ++;
+    if (currentQ >= QUESTIONS.length) { stopInterview(); return; }
+
+    // Reset reading data for new question
+    gazeHistory = [];
+    document.getElementById('cycle-count').textContent = '0';
+    document.getElementById('reading-bar').className = 'reading-bar normal';
+    document.getElementById('reading-bar').textContent = 'Waiting for question to finish...';
+
+    // Show question
+    document.getElementById('q-num').textContent = `Question ${currentQ + 1} of ${QUESTIONS.length}`;
+    document.getElementById('q-text').textContent = QUESTIONS[currentQ];
+    document.getElementById('q-counter').textContent = `Q${currentQ + 1} / ${QUESTIONS.length}`;
+
+    // Speak the question
+    phase = 'speaking';
+    setPhaseUI('speaking');
+    addLog(`Q${currentQ+1}: ${QUESTIONS[currentQ].substring(0,60)}...`, 'question-log');
+
+    const utt = new SpeechSynthesisUtterance(QUESTIONS[currentQ]);
+    utt.rate = SET.voiceSpeed;
+    utt.onend = () => {
+        if (!interviewActive) return;
+        // Question done speaking — now listen and monitor eyes
+        phase = 'listening';
+        setPhaseUI('listening');
+        document.getElementById('reading-bar').textContent = 'MONITORING — Answer now (eyes being tracked)';
+        document.getElementById('reading-bar').className = 'reading-bar normal';
+        addLog('Listening — eye monitoring active');
+        startGazeMonitoring();
+
+        // Auto-advance after 25 seconds of listening
+        setTimeout(() => {
+            if (phase === 'listening' && interviewActive) {
+                stopGazeMonitoring();
+                nextQuestion();
+            }
+        }, 25000);
+    };
+    speechSynthesis.speak(utt);
+}
+
+function skipQuestion() {
+    if (!interviewActive) return;
+    speechSynthesis.cancel();
+    stopGazeMonitoring();
+    nextQuestion();
+}
+
+function setPhaseUI(p) {
+    const badge = document.getElementById('status-badge');
+    badge.className = 'status-badge badge-' + p;
+    badge.textContent = p;
+}
+
+// ═══════════════════════════════════════════
+// GAZE MONITORING (only during listening)
+// ═══════════════════════════════════════════
+function startGazeMonitoring() {
+    gazeHistory = [];
+    if (gazeTimer) clearInterval(gazeTimer);
+    gazeTimer = setInterval(checkGaze, SET.interval);
+}
+
+function stopGazeMonitoring() {
+    if (gazeTimer) { clearInterval(gazeTimer); gazeTimer = null; }
+}
+
+function restartTimer() {
+    if (phase === 'listening') {
+        stopGazeMonitoring();
+        startGazeMonitoring();
+    }
 }
 
 async function checkGaze() {
-    if (!mediapipeReady || !faceMesh || detecting) return;
+    if (!mediapipeReady || !faceMesh || detecting || phase !== 'listening') return;
     if (!video.srcObject || video.readyState < 2) return;
 
     detecting = true;
-    try {
-        await faceMesh.send({ image: video });
-    } catch (e) { detecting = false; return; }
+    try { await faceMesh.send({ image: video }); } catch(e) { detecting = false; return; }
 
     const { x, y, valid } = latestGaze;
 
-    // Update display
     document.getElementById('gaze-x').textContent = valid ? x.toFixed(2) : '--';
     document.getElementById('gaze-y').textContent = valid ? y.toFixed(2) : '--';
-    camStatus.textContent = valid ? `X:${x.toFixed(2)} Y:${y.toFixed(2)}` : 'no face / no iris';
+    camStatus.textContent = valid ? `X:${x.toFixed(2)} Y:${y.toFixed(2)}` : 'no iris';
     camStatus.style.color = valid ? '#4ade80' : '#f87171';
 
     if (!valid) { detecting = false; return; }
 
-    // Add to history
-    gazeHistory.push({ x, y, time: Date.now() });
-    if (gazeHistory.length > windowSize) gazeHistory.shift();
+    gazeHistory.push({ x, y });
+    if (gazeHistory.length > SET.window) gazeHistory.shift();
 
-    document.getElementById('data-points').textContent = gazeHistory.length;
-
-    // ═══ READING PATTERN DETECTION ═══
-    // A reading cycle = smooth right sweep → sharp snap-back left → Y drops at snap-back
-    // Need 3+ complete cycles sustained over 15-20 seconds
-    if (gazeHistory.length >= 10) {
-
-        // ── Step 1: Detect complete reading cycles ──
-        // A cycle: X gradually increases (smooth sweep right)
-        //          then X suddenly drops (sharp snap-back to start of next line)
-        //          and Y increases slightly at the snap-back (moved to next line)
+    // ═══ READING PATTERN ANALYSIS ═══
+    if (gazeHistory.length >= 8) {
         let completeCycles = 0;
         let sweeping = false;
         let sweepStartX = gazeHistory[0].x;
         let sweepStartY = gazeHistory[0].y;
         let maxXInSweep = sweepStartX;
-        let smoothRightCount = 0;  // How many smooth rightward steps in current sweep
+        let smoothRightCount = 0;
 
         for (let i = 1; i < gazeHistory.length; i++) {
-            const dx = gazeHistory[i].x - gazeHistory[i - 1].x;
-            const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
+            const dx = gazeHistory[i].x - gazeHistory[i-1].x;
 
             if (!sweeping) {
-                // Looking for start of a rightward sweep
                 if (dx > 0.008) {
                     sweeping = true;
-                    sweepStartX = gazeHistory[i - 1].x;
-                    sweepStartY = gazeHistory[i - 1].y;
+                    sweepStartX = gazeHistory[i-1].x;
+                    sweepStartY = gazeHistory[i-1].y;
                     maxXInSweep = gazeHistory[i].x;
                     smoothRightCount = 1;
                 }
             } else {
-                // Currently in a rightward sweep
                 if (gazeHistory[i].x > maxXInSweep) maxXInSweep = gazeHistory[i].x;
+                if (dx > 0.005) smoothRightCount++;
 
-                if (dx > 0.005) {
-                    smoothRightCount++;  // Still moving right smoothly
-                }
-
-                // Check for SHARP snap-back left (end of line)
+                // Sharp snap-back = end of line
                 if (dx < -0.015) {
                     const sweepSize = maxXInSweep - sweepStartX;
                     const yChange = gazeHistory[i].y - sweepStartY;
 
-                    // Valid reading cycle:
-                    // 1. Sweep was smooth (2+ rightward steps, not just a jump)
-                    // 2. Sweep covered enough horizontal distance
-                    // 3. Y went slightly downward during/after the sweep (next line)
+                    // Valid cycle: smooth sweep (2+ steps) + enough distance + Y didn't go up
                     if (smoothRightCount >= 2 && sweepSize > 0.02 && yChange > -0.01) {
                         completeCycles++;
-                        addLog(`Cycle #${completeCycles}: sweep=${(sweepSize*100).toFixed(1)}% right (${smoothRightCount} steps), Y change=${(yChange*100).toFixed(2)}%`, 'sweep-log');
+                        addLog(`Cycle #${completeCycles}: sweep ${(sweepSize*100).toFixed(1)}% (${smoothRightCount} steps), Y +${(yChange*100).toFixed(2)}%`, 'sweep-log');
                     }
                     sweeping = false;
                     smoothRightCount = 0;
                 }
-
-                // If X reverses slightly but not a sharp snap-back, could be a pause in reading
-                // Allow small backwards movement without breaking the sweep
-                if (dx < -0.025) {
-                    // Big jump left without enough sweep = not reading, just random movement
-                    sweeping = false;
-                    smoothRightCount = 0;
-                }
+                if (dx < -0.025) { sweeping = false; smoothRightCount = 0; }
             }
         }
 
-        // ── Step 2: Check overall Y trend ──
+        // Y trend — must go consistently downward for reading
         const firstY = gazeHistory[0].y;
-        const lastY = gazeHistory[gazeHistory.length - 1].y;
-        const yTrend = lastY - firstY;  // positive = went downward overall
-
-        // Count how many times Y moved downward (should be consistent for reading)
-        let yDownCount = 0;
-        let yUpCount = 0;
+        const lastY = gazeHistory[gazeHistory.length-1].y;
+        const yTrend = lastY - firstY;
+        let yDown = 0, yUp = 0;
         for (let i = 1; i < gazeHistory.length; i++) {
-            const dy = gazeHistory[i].y - gazeHistory[i - 1].y;
-            if (dy > 0.001) yDownCount++;
-            if (dy < -0.001) yUpCount++;
+            const dy = gazeHistory[i].y - gazeHistory[i-1].y;
+            if (dy > 0.001) yDown++;
+            if (dy < -0.001) yUp++;
         }
-        // Y should go down more than up when reading (scrolling through text)
-        const yConsistentlyDown = yDownCount > yUpCount && yTrend > 0.003;
+        const yConsistentDown = yDown > yUp && yTrend > 0.003;
 
-        document.getElementById('sweep-count').textContent = completeCycles;
-        document.getElementById('ydown-count').textContent = yDownCount + '/' + (yDownCount + yUpCount);
+        document.getElementById('cycle-count').textContent = completeCycles;
 
-        // ── Step 3: Final reading decision ──
-        // READING = 3+ complete cycles + Y consistently going down + sustained window
-        const isReading = completeCycles >= xSweepThreshold && yConsistentlyDown;
+        // READING = 3+ complete cycles + Y consistently down
+        const isReading = completeCycles >= SET.minCycles && yConsistentDown;
 
-        // Also check: NOT reading if pattern is random (thinking)
-        // Thinking = high X variance but no smooth sweeps, no Y trend
-        const isThinking = completeCycles < 2 && !yConsistentlyDown;
-
-        const statusEl = document.getElementById('reading-status');
+        const bar = document.getElementById('reading-bar');
         if (isReading) {
             totalReadings++;
-            document.getElementById('total-readings').textContent = totalReadings;
-            statusEl.className = 'reading-status reading';
-            statusEl.textContent = `READING DETECTED — ${completeCycles} cycles, Y trend: +${(yTrend * 100).toFixed(1)}%, Y down ${yDownCount}/${yDownCount+yUpCount}`;
-            addLog(`READING CONFIRMED: ${completeCycles} complete read-line cycles | Y trend +${(yTrend*100).toFixed(1)}% | sustained ${((gazeHistory.length * checkInterval)/1000).toFixed(0)}s`, 'reading-log');
-        } else if (completeCycles >= 1 || (yConsistentlyDown && completeCycles >= 1)) {
-            statusEl.className = 'reading-status warning';
-            statusEl.textContent = `Monitoring — ${completeCycles} cycles, Y down: ${yDownCount}/${yDownCount+yUpCount}`;
-        } else if (isThinking) {
-            statusEl.className = 'reading-status normal';
-            statusEl.textContent = `NORMAL — Thinking (random movement, no pattern)`;
+            document.getElementById('reading-count').textContent = totalReadings;
+            bar.className = 'reading-bar reading';
+            bar.textContent = `READING DETECTED — ${completeCycles} cycles, Y trend +${(yTrend*100).toFixed(1)}%`;
+            addLog(`READING at Q${currentQ+1}: ${completeCycles} cycles, Y +${(yTrend*100).toFixed(1)}%, ${((gazeHistory.length*SET.interval)/1000).toFixed(0)}s`, 'reading-log');
+        } else if (completeCycles >= 1) {
+            bar.className = 'reading-bar warning';
+            bar.textContent = `Monitoring — ${completeCycles} cycle(s), Y down: ${yDown}/${yDown+yUp}`;
         } else {
-            statusEl.className = 'reading-status normal';
-            statusEl.textContent = 'NORMAL — Eyes stable';
+            bar.className = 'reading-bar normal';
+            bar.textContent = `NORMAL — ${gazeHistory.length} pts, no reading pattern`;
         }
     }
 
-    // Draw chart
     drawChart();
-
     detecting = false;
 }
 
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════
 // CHART
-// ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════
 function drawChart() {
-    const w = chart.width = chart.parentElement.clientWidth - 32;
-    const h = chart.height = 150;
-
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, w, h);
-
+    const w = chart.width = chart.parentElement.clientWidth - 16;
+    const h = chart.height = 100;
+    chartCtx.fillStyle = '#111';
+    chartCtx.fillRect(0, 0, w, h);
     if (gazeHistory.length < 2) return;
 
-    // Grid lines
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 4; i++) {
-        const yPos = (i / 4) * h;
-        ctx.beginPath(); ctx.moveTo(0, yPos); ctx.lineTo(w, yPos); ctx.stroke();
-    }
-
-    // Center line (0.5)
-    ctx.strokeStyle = '#333';
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
-    ctx.setLineDash([]);
+    chartCtx.strokeStyle = '#1a1a1a'; chartCtx.lineWidth = 1;
+    chartCtx.setLineDash([2,2]);
+    chartCtx.beginPath(); chartCtx.moveTo(0,h/2); chartCtx.lineTo(w,h/2); chartCtx.stroke();
+    chartCtx.setLineDash([]);
 
     const step = w / (gazeHistory.length - 1);
 
-    // Draw X (blue)
-    ctx.strokeStyle = '#60a5fa';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
+    // X line (blue)
+    chartCtx.strokeStyle = '#60a5fa'; chartCtx.lineWidth = 2;
+    chartCtx.beginPath();
     for (let i = 0; i < gazeHistory.length; i++) {
-        const px = i * step;
-        const py = (1 - gazeHistory[i].x) * h;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        const px = i * step, py = (1 - gazeHistory[i].x) * h;
+        i === 0 ? chartCtx.moveTo(px, py) : chartCtx.lineTo(px, py);
     }
-    ctx.stroke();
+    chartCtx.stroke();
 
-    // Draw Y (purple)
-    ctx.strokeStyle = '#a78bfa';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
+    // Y line (purple)
+    chartCtx.strokeStyle = '#a78bfa'; chartCtx.lineWidth = 2;
+    chartCtx.beginPath();
     for (let i = 0; i < gazeHistory.length; i++) {
-        const px = i * step;
-        const py = (1 - gazeHistory[i].y) * h;
-        if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        const px = i * step, py = (1 - gazeHistory[i].y) * h;
+        i === 0 ? chartCtx.moveTo(px, py) : chartCtx.lineTo(px, py);
     }
-    ctx.stroke();
-
-    // Labels
-    ctx.fillStyle = '#60a5fa'; ctx.font = '10px monospace'; ctx.fillText('X', 4, 12);
-    ctx.fillStyle = '#a78bfa'; ctx.fillText('Y', 20, 12);
+    chartCtx.stroke();
 }
 
-// ═══════════════════════════════════════════════════
-// CONTROLS
-// ═══════════════════════════════════════════════════
-function updateInterval(val) {
-    checkInterval = parseInt(val);
-    document.getElementById('interval-val').textContent = val + 'ms';
-    startChecking();
-}
-function updateWindow(val) {
-    windowSize = parseInt(val);
-    document.getElementById('window-val').textContent = val + ' pts';
-}
-function updateXSweep(val) {
-    xSweepThreshold = parseInt(val);
-    document.getElementById('xsweep-val').textContent = val + ' sweeps';
-}
-function updateYDown(val) {
-    yDownThreshold = parseInt(val);
-    document.getElementById('ydown-val').textContent = val + ' drops';
-}
-function resetHistory() {
-    gazeHistory = [];
-    totalReadings = 0;
-    document.getElementById('total-readings').textContent = '0';
-    document.getElementById('data-points').textContent = '0';
-    document.getElementById('sweep-count').textContent = '0';
-    document.getElementById('ydown-count').textContent = '0';
-    document.getElementById('reading-status').className = 'reading-status normal';
-    document.getElementById('reading-status').textContent = 'NORMAL — Eyes stable';
-    addLog('History reset');
-}
-function addLog(msg, cls = '') {
+// ═══════════════════════════════════════════
+// LOG
+// ═══════════════════════════════════════════
+function addLog(msg, cls='') {
     const box = document.getElementById('log-box');
     const div = document.createElement('div');
     div.className = cls;
-    div.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
+    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
     box.prepend(div);
     if (box.children.length > 50) box.lastChild.remove();
 }
