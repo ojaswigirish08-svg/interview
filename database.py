@@ -19,9 +19,14 @@ def init_db():
         return
 
     try:
-        import psycopg2
-        from psycopg2 import pool
-        _pool = pool.SimpleConnectionPool(1, 10, DATABASE_URL)
+        import psycopg
+        from psycopg_pool import ConnectionPool
+
+        _pool = ConnectionPool(
+            conninfo=DATABASE_URL,
+            min_size=1,
+            max_size=10
+        )
 
         # Create tables from schema.sql
         schema_path = os.path.join(os.path.dirname(__file__), "schema.sql")
