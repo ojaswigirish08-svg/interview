@@ -26,3 +26,6 @@ elevenlabs>=1.0.0
 # numpy
 
 # TTS (Mistral Voxtral — uses requests, no extra package)
+
+# Database (optional — runs without DB if DATABASE_URL not set)
+psycopg2-binary>=2.9.0

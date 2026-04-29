@@ -1251,7 +1251,7 @@
             currentAudio = null;
         } else if ('speechSynthesis' in window) {
             const utt = new SpeechSynthesisUtterance(text);
-            utt.rate = 0.93;
+            utt.rate = 1.2;
             await new Promise(resolve => {
                 utt.onend = resolve;
                 utt.onerror = resolve;
@@ -1285,7 +1285,7 @@
             currentAudio = null;
         } else if ('speechSynthesis' in window) {
             const utt = new SpeechSynthesisUtterance(text);
-            utt.rate = 0.93;
+            utt.rate = 1.2;
             await new Promise(resolve => {
                 utt.onend = resolve;
                 utt.onerror = resolve;

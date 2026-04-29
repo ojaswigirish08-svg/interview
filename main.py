@@ -63,7 +63,13 @@ except Exception:
     pass
 
 sessions: dict = {}
-candidate_history: dict = {}  # key: "name|email" -> list of past session summaries
+
+# Database module (PostgreSQL — optional, falls back to in-memory)
+import database as db
+
+@app.on_event("startup")
+def startup_db():
+    db.init_db()
 
 
 # ════════════════════════════════════════════════════════════
@@ -1143,7 +1149,7 @@ def generate_question(session, candidate_answer=None):
 # WARMUP
 # ════════════════════════════════════════════════════════════
 def save_candidate_history(session):
-    """Save session summary for returning candidate lookup."""
+    """Save session summary to PostgreSQL (falls back to print-only if DB unavailable)."""
     candidate_key = session.get("candidate_key", "")
     if not candidate_key: return
     scored = [h for h in session["history"] if h.get("evaluation") and h["phase"]!="warmup" and (h.get("evaluation") or {}).get("quality") not in ("warmup",None,"no_answer")]
@@ -1158,18 +1164,37 @@ def save_candidate_history(session):
     tp = session.get("topic_performance", {})
     weak = [t for t,d in tp.items() if d.get("avg_score",5) < 4]
     strong = [t for t,d in tp.items() if d.get("avg_score",0) >= 7]
-    summary = {
-        "session_id": session["id"],
-        "date": time.strftime("%Y-%m-%d %H:%M"),
-        "overall_score": min(100, int(avg * 10)),
-        "difficulty_level": session.get("difficulty_level", 1),
-        "topic_performance": tp,
-        "weak_topics": weak,
-        "strong_topics": strong,
-        "turns_completed": len(scored),
-    }
-    candidate_history.setdefault(candidate_key, []).append(summary)
-    print(f"[History] Saved for {candidate_key}: score={summary['overall_score']}, weak={weak}, strong={strong}")
+    overall_score = min(100, int(avg * 10))
+
+    resume = session.get("resume", {})
+    candidate_id = db.get_or_create_candidate(
+        candidate_key,
+        resume.get("candidate_name", "Candidate"),
+        resume.get("email", ""),
+        resume.get("domain", "physical_design"),
+        resume.get("level", "unknown"),
+        resume.get("education", "")
+    )
+
+    db.save_session(
+        session_id=session["id"],
+        candidate_id=candidate_id,
+        mode=session.get("mode", "mock"),
+        difficulty_level=session.get("difficulty_level", 1),
+        turns_completed=len(scored),
+        overall_score=overall_score,
+        grade=None,
+        warmup_performance=session.get("warmup_performance", "pending"),
+        early_end_reason=session.get("early_end_reason"),
+        started_at=session.get("started_at", time.time()),
+        topic_performance=tp,
+        weak_topics=weak,
+        strong_topics=strong,
+        warmup_turns=session.get("warmup_turns", 0),
+        warmup_perf_str=session.get("warmup_performance", "pending"),
+        skills_asked=session.get("warmup_skills_asked")
+    )
+    print(f"[History] Saved for {candidate_key}: score={overall_score}, weak={weak}, strong={strong}")
 
 def strip_initials(name):
     parts=name.split()
@@ -1241,7 +1266,7 @@ def synthesize_speech_lmnt(text):
     resp = http_requests.post(
         "https://api.lmnt.com/v1/ai/speech",
         headers={"X-API-Key":LMNT_API_KEY,"Content-Type":"application/json"},
-        json={"voice":LMNT_VOICE_ID,"text":text[:1500],"format":"mp3"},
+        json={"voice":LMNT_VOICE_ID,"text":text[:1500],"format":"mp3","speed":1.2},
         timeout=15,
     )
     resp.raise_for_status()
@@ -1557,18 +1582,25 @@ async def create_session(data: SessionCreate):
     candidate_projects_text = " ".join(resume.get("key_projects", [])).lower()
     resume_gaps = [t for t in domain_topics if t.lower() not in candidate_skills and t.lower() not in candidate_projects_text]
 
-    # Check for returning candidate
+    # Check for returning candidate (from PostgreSQL)
     candidate_key = f"{resume.get('candidate_name','').lower().strip()}|{resume.get('email','').lower().strip()}"
-    previous_sessions = candidate_history.get(candidate_key, [])
+    previous_sessions = db.get_candidate_sessions(candidate_key)
     is_returning = len(previous_sessions) > 0
+    skip_warmup = len(previous_sessions) >= 2  # 2+ interviews → skip warmup on 3rd
     starting_difficulty = 1
     if is_returning and previous_sessions:
         last = previous_sessions[-1]
         starting_difficulty = min(4, max(0, last.get("difficulty_level", 1)))
-        print(f"[Session] Returning candidate: {resume.get('candidate_name','')} | prev score: {last.get('overall_score','?')} | starting at difficulty {starting_difficulty}")
+        print(f"[Session] Returning candidate: {resume.get('candidate_name','')} | prev sessions: {len(previous_sessions)} | prev score: {last.get('overall_score','?')} | starting at difficulty {starting_difficulty} | skip_warmup: {skip_warmup}")
 
-    session={"id":sid,"mode":data.mode,"resume":resume,"phase":"greeting","turn":0,"warmup_turns":0,"warmup_performance":"pending","warmup_conversation":[],"difficulty_level":starting_difficulty,"consecutive_strong":0,"consecutive_weak":0,"history":[],"topics_covered":[],"anchor_count":0,"last_topic":None,"last_question_type":None,"last_eval_quality":"adequate","last_confidence":"medium","anticheat_events":[],"behavioral_baseline":None,"pause_history":[],"trajectory_type":"unknown","hint_events":[],"notable_moments":[],"suspicion_events":[],"smooth_talker_signals":[],"smooth_talker_detected":False,"smooth_talker_score":0,"genuine_signals":[],"contradiction_asked":{},"topic_suspicion":{},"started_at":time.time(),"cached_first_question":None,"cached_first_audio":None,"resume_gaps":resume_gaps,"topic_performance":{},"running_suspicion":0,"is_returning":is_returning,"previous_sessions":previous_sessions,"candidate_key":candidate_key,"tts_enabled":TTS_ENABLED}
+    session={"id":sid,"mode":data.mode,"resume":resume,"phase":"greeting","turn":0,"warmup_turns":0,"warmup_performance":"pending","warmup_conversation":[],"difficulty_level":starting_difficulty,"consecutive_strong":0,"consecutive_weak":0,"history":[],"topics_covered":[],"anchor_count":0,"last_topic":None,"last_question_type":None,"last_eval_quality":"adequate","last_confidence":"medium","anticheat_events":[],"behavioral_baseline":None,"pause_history":[],"trajectory_type":"unknown","hint_events":[],"notable_moments":[],"suspicion_events":[],"smooth_talker_signals":[],"smooth_talker_detected":False,"smooth_talker_score":0,"genuine_signals":[],"contradiction_asked":{},"topic_suspicion":{},"started_at":time.time(),"cached_first_question":None,"cached_first_audio":None,"resume_gaps":resume_gaps,"topic_performance":{},"running_suspicion":0,"is_returning":is_returning,"previous_sessions":previous_sessions,"candidate_key":candidate_key,"tts_enabled":TTS_ENABLED,"skip_warmup":skip_warmup}
     sessions[sid]=session
+
+    # If returning candidate with 2+ interviews, skip warmup → go directly to technical
+    if skip_warmup:
+        session["phase"] = "greeting"  # Still greet, but will skip warmup after greeting
+        session["warmup_performance"] = "skipped_returning"
+        print(f"[Session] Will skip warmup for returning candidate ({len(previous_sessions)} prior sessions)")
     try:
         first_q=generate_greeting(session)
         first_audio=synthesize_speech(first_q["question"], session_id=sid)
@@ -1621,7 +1653,13 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         dev=analyze_behavioral_deviation(session,data.answer,data.answer_duration_sec,data.word_count,data.thinking_pause_sec,data.input_mode,current_entry.get("difficulty","basic"))
         current_entry["behavioral_flags"]=dev["flags"]; current_entry["behavioral_deviation"]=dev["deviation_score"]
     if session["phase"]=="greeting":
-        session["phase"]="warmup"; result=generate_warmup_question(session); session["warmup_conversation"].append(f"Interviewer: {result['question']}")
+        if session.get("skip_warmup"):
+            # Returning candidate (2+ interviews) — skip warmup, go to technical
+            session["phase"]="interview"; result=generate_question(session)
+            result["warmup_feedback"]="Welcome back! Let's jump straight into the technical questions."
+            print(f"[Interview] Skipped warmup for returning candidate")
+        else:
+            session["phase"]="warmup"; result=generate_warmup_question(session); session["warmup_conversation"].append(f"Interviewer: {result['question']}")
     elif session["phase"]=="warmup":
         session["warmup_turns"]+=1; session["warmup_conversation"].append(f"Candidate: {data.answer}")
         if session["warmup_turns"]>=3:
@@ -1650,7 +1688,10 @@ async def submit_answer(request: Request, data: AnswerSubmit):
             if session["no_answer_count"] >= 3:
                 candidate_name = strip_initials(session["resume"].get("candidate_name","Candidate"))
                 session["phase"] = "ended"
+                session["early_end_reason"] = "no_answers"
+                save_candidate_history(session)
                 result = {"question":f"{candidate_name}, we haven't been able to hear your responses. We'll stop here so you can check your microphone. Come back anytime.","question_type":"farewell"}
+                print(f"[Interview] Ending — {session['no_answer_count']} consecutive no-answers")
             else:
                 result = generate_question(session)
         else:
@@ -1749,22 +1790,27 @@ async def submit_answer(request: Request, data: AnswerSubmit):
                 last_3=recent_interview[-3:]
                 if all(h["evaluation"].get("quality") in ("weak","honest_admission") and (h["evaluation"].get("score") or 5)<=3 for h in last_3):
                     struggling_end=True; session["phase"]="ended"; session["early_end_reason"]="struggling_real"
+                    save_candidate_history(session)
                     candidate_name=strip_initials(session["resume"].get("candidate_name","Candidate"))
                     result["question"]=f"Thank you {candidate_name}, I appreciate your time today. We've covered several topics and I have a good understanding of where you stand. We'll wrap up here. You'll receive a detailed feedback report shortly."
                     result["question_type"]="farewell"
+                    print(f"[Interview] REAL MODE early end — candidate struggling")
             elif len(recent_interview)>=4:
                 last_4=recent_interview[-4:]
                 if all(h["evaluation"].get("quality") in ("weak","honest_admission") and (h["evaluation"].get("score") or 5)<=3 for h in last_4):
                     struggling_end=True; session["phase"]="ended"; session["early_end_reason"]="struggling"
+                    save_candidate_history(session)
                     candidate_name=strip_initials(session["resume"].get("candidate_name","Candidate"))
                     result["question"]=f"Alright {candidate_name}, let's pause here. I can see some of these topics are challenging right now, and that's completely okay. I'm going to generate a detailed report with specific areas to focus on and resources that will help you prepare."
                     result["question_type"]="farewell"
+                    print(f"[Interview] MOCK MODE early end — candidate struggling")
 
     # Off-topic early stop — 3 consecutive off-topic answers
     off_topic_end = False
     if session.get("off_topic_count", 0) >= 3 and session["phase"] == "interview":
         off_topic_end = True
         session["phase"] = "ended"; session["early_end_reason"] = "off_topic"
+        save_candidate_history(session)
         candidate_name = strip_initials(session["resume"].get("candidate_name","Candidate"))
         domain_name = session["resume"].get("domain","VLSI").replace("_"," ")
         result["question"] = f"{candidate_name}, your last few answers were not related to the questions being asked. Let's stop here. I'd suggest reviewing the core {domain_name} topics and coming back for another mock when you feel more prepared."
