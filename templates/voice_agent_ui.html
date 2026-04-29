@@ -733,9 +733,9 @@
                                 currentGaze = (lG + rG) / 2;
 
                                 // Eyes looking away (fixed gaze off-screen)
-                                if (currentGaze < 0.35 || currentGaze > 0.65) {
+                                if (currentGaze < 0.38 || currentGaze > 0.55) {
                                     eyeReading = true;
-                                    eyeDirection = currentGaze < 0.35 ? 'left' : 'right';
+                                    eyeDirection = currentGaze < 0.38 ? 'left' : 'right';
                                 }
                             }
                         }
