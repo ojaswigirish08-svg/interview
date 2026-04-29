@@ -277,6 +277,7 @@ if ELEVENLABS_API_KEY:
 
 LMNT_API_KEY  = os.getenv("LMNT_API_KEY", "")
 LMNT_VOICE_ID = os.getenv("LMNT_VOICE_ID", "")
+TTS_ENABLED   = os.getenv("TTS_ENABLED", "true").lower() == "true"
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
 
@@ -1259,6 +1260,13 @@ def synthesize_speech_polly(text):
 
 def synthesize_speech(text: str, session_id: str = "unknown") -> str:
     """TTS with fallback chain: LMNT → Pocket TTS. Tracks every call."""
+    # Check global TTS toggle and per-session override
+    session = sessions.get(session_id)
+    tts_on = TTS_ENABLED
+    if session and "tts_enabled" in session:
+        tts_on = session["tts_enabled"]
+    if not tts_on:
+        return ""  # No audio — frontend will use browser speechSynthesis or show text only
     char_count = len(text)
     if LMNT_API_KEY and LMNT_VOICE_ID:
         t0 = time.time()
@@ -1556,7 +1564,7 @@ async def create_session(data: SessionCreate):
         starting_difficulty = min(4, max(0, last.get("difficulty_level", 1)))
         print(f"[Session] Returning candidate: {resume.get('candidate_name','')} | prev score: {last.get('overall_score','?')} | starting at difficulty {starting_difficulty}")
 
-    session={"id":sid,"mode":data.mode,"resume":resume,"phase":"greeting","turn":0,"warmup_turns":0,"warmup_performance":"pending","warmup_conversation":[],"difficulty_level":starting_difficulty,"consecutive_strong":0,"consecutive_weak":0,"history":[],"topics_covered":[],"anchor_count":0,"last_topic":None,"last_question_type":None,"last_eval_quality":"adequate","last_confidence":"medium","anticheat_events":[],"behavioral_baseline":None,"pause_history":[],"trajectory_type":"unknown","hint_events":[],"notable_moments":[],"suspicion_events":[],"smooth_talker_signals":[],"smooth_talker_detected":False,"smooth_talker_score":0,"genuine_signals":[],"contradiction_asked":{},"topic_suspicion":{},"started_at":time.time(),"cached_first_question":None,"cached_first_audio":None,"resume_gaps":resume_gaps,"topic_performance":{},"running_suspicion":0,"is_returning":is_returning,"previous_sessions":previous_sessions,"candidate_key":candidate_key}
+    session={"id":sid,"mode":data.mode,"resume":resume,"phase":"greeting","turn":0,"warmup_turns":0,"warmup_performance":"pending","warmup_conversation":[],"difficulty_level":starting_difficulty,"consecutive_strong":0,"consecutive_weak":0,"history":[],"topics_covered":[],"anchor_count":0,"last_topic":None,"last_question_type":None,"last_eval_quality":"adequate","last_confidence":"medium","anticheat_events":[],"behavioral_baseline":None,"pause_history":[],"trajectory_type":"unknown","hint_events":[],"notable_moments":[],"suspicion_events":[],"smooth_talker_signals":[],"smooth_talker_detected":False,"smooth_talker_score":0,"genuine_signals":[],"contradiction_asked":{},"topic_suspicion":{},"started_at":time.time(),"cached_first_question":None,"cached_first_audio":None,"resume_gaps":resume_gaps,"topic_performance":{},"running_suspicion":0,"is_returning":is_returning,"previous_sessions":previous_sessions,"candidate_key":candidate_key,"tts_enabled":TTS_ENABLED}
     sessions[sid]=session
     try:
         first_q=generate_greeting(session)
@@ -1786,6 +1794,25 @@ async def transcribe_endpoint(request: Request, audio: UploadFile = File(...), s
     loop=asyncio.get_event_loop()
     result=await loop.run_in_executor(None, transcribe_audio, audio_bytes, ext, session_id)
     return JSONResponse(result)
+
+@app.post("/api/toggle-tts")
+async def toggle_tts(data: dict):
+    """Toggle TTS on/off globally or per session."""
+    sid = data.get("session_id")
+    enabled = data.get("enabled", True)
+    if sid:
+        session = sessions.get(sid)
+        if not session: raise HTTPException(404, "Session not found")
+        session["tts_enabled"] = enabled
+        return JSONResponse({"ok": True, "tts_enabled": enabled, "scope": "session"})
+    else:
+        global TTS_ENABLED
+        TTS_ENABLED = enabled
+        return JSONResponse({"ok": True, "tts_enabled": enabled, "scope": "global"})
+
+@app.get("/api/tts-status")
+async def tts_status():
+    return JSONResponse({"tts_enabled": TTS_ENABLED})
 
 @app.post("/api/end-session")
 async def end_session(data: dict):
