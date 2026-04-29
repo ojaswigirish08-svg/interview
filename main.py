@@ -1801,6 +1801,16 @@ async def anticheat_event(data: AntiCheatEvent):
     session=sessions.get(data.session_id)
     if not session: return JSONResponse({"ok":False})
     session["anticheat_events"].append({"event_type":data.event_type,"turn":data.turn,"timestamp":data.timestamp,"metadata":data.metadata})
+
+    # Increase difficulty for serious cheating events (not head turn or eye movement)
+    if data.event_type in ("tab_switch","paste_event","dom_overlay","ai_answer_overlay","ai_extension_detected") and session.get("phase") == "interview":
+        old_diff = session.get("difficulty_level", 1)
+        new_diff = min(4, old_diff + 1)
+        if new_diff > old_diff:
+            session["difficulty_level"] = new_diff
+            session["running_suspicion"] = session.get("running_suspicion", 0) + 10
+            print(f"[Anti-cheat] {data.event_type} -> difficulty: {old_diff} -> {new_diff}")
+
     return JSONResponse({"ok":True})
 
 @app.post("/api/generate-report")

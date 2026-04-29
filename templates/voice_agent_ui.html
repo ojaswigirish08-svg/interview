@@ -579,68 +579,94 @@
         let latestResult = { present: false, headTurned: false, direction: null, eyeReading: false, eyeDirection: null, gazeX: 0.5, eyeScanning: false };
 
         // Warning overlay for camera (face not detected)
+        // Shared warning popup style
+        const warnStyle = `
+            position:fixed;inset:0;z-index:9998;display:none;align-items:center;justify-content:center;
+            background:linear-gradient(135deg,rgba(0,0,0,0.92) 0%,rgba(30,10,10,0.95) 100%);
+            backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+            animation:warnFadeIn 0.3s ease;
+        `;
+        const warnCard = (icon, iconBg, title, body, btnId, btnText) => `
+            <div style="background:#fff;border-radius:20px;padding:36px 40px;max-width:440px;width:90%;text-align:center;
+                        box-shadow:0 20px 60px rgba(0,0,0,0.4),0 0 0 1px rgba(255,255,255,0.05);
+                        animation:warnSlideUp 0.35s ease;">
+                <div style="width:64px;height:64px;border-radius:50%;background:${iconBg};
+                            display:flex;align-items:center;justify-content:center;
+                            margin:0 auto 16px;font-size:28px;
+                            box-shadow:0 4px 16px ${iconBg}44;">${icon}</div>
+                <div style="font-family:'DM Sans',sans-serif;font-size:20px;font-weight:700;color:#111;
+                            margin-bottom:6px;letter-spacing:-0.3px;">${title}</div>
+                <div style="font-family:'DM Sans',sans-serif;font-size:14px;color:#666;line-height:1.7;
+                            margin-bottom:24px;max-width:340px;margin-left:auto;margin-right:auto;">${body}</div>
+                <button id="${btnId}" style="padding:12px 32px;background:linear-gradient(135deg,#111 0%,#333 100%);
+                        color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;
+                        font-size:14px;font-weight:600;cursor:pointer;
+                        box-shadow:0 4px 12px rgba(0,0,0,0.2);
+                        transition:all 0.15s ease;"
+                    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(0,0,0,0.3)'"
+                    onmouseout="this.style.transform='none';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'">${btnText}</button>
+            </div>
+        `;
+
+        // Inject animation keyframes
+        if (!document.getElementById('warn-animations')) {
+            const styleEl = document.createElement('style');
+            styleEl.id = 'warn-animations';
+            styleEl.textContent = `
+                @keyframes warnFadeIn { from{opacity:0} to{opacity:1} }
+                @keyframes warnSlideUp { from{opacity:0;transform:translateY(20px) scale(0.96)} to{opacity:1;transform:none} }
+            `;
+            document.head.appendChild(styleEl);
+        }
+
+        // Face not detected warning
         const camWarningOverlay = document.createElement('div');
         camWarningOverlay.id = 'cam-warning-overlay';
-        camWarningOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
-        camWarningOverlay.innerHTML = `
-            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
-                <div style="font-size:40px;margin-bottom:12px;">&#128247;</div>
-                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Face Not Detected</div>
-                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                    We cannot see your face on camera.<br>
-                    Please make sure you are visible and well-lit.<br>
-                    <strong>Continued absence will end the interview.</strong>
-                </div>
-                <button id="cam-warning-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
-                    I'm Here — Continue
-                </button>
-            </div>`;
+        camWarningOverlay.style.cssText = warnStyle;
+        camWarningOverlay.innerHTML = warnCard(
+            '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M15 10l4.553-2.069A1 1 0 0121 8.87v6.26a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/><line x1="2" y1="2" x2="22" y2="22"/></svg>',
+            '#ef4444',
+            'Face Not Detected',
+            'We can\'t see your face on camera.<br>Please make sure you\'re visible and well-lit.<br><span style="color:#ef4444;font-weight:600;">Continued absence will end the interview.</span>',
+            'cam-warning-btn',
+            'I\'m Here — Continue'
+        );
         document.body.appendChild(camWarningOverlay);
         document.getElementById('cam-warning-btn').addEventListener('click', () => {
             camWarningOverlay.style.display = 'none';
             noFaceCount = 0;
         });
 
-        // Warning overlay for head turning
+        // Head turn warning
         const headTurnOverlay = document.createElement('div');
         headTurnOverlay.id = 'head-turn-overlay';
-        headTurnOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
-        headTurnOverlay.innerHTML = `
-            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
-                <div style="font-size:40px;margin-bottom:12px;">&#128064;</div>
-                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Please Look at the Screen</div>
-                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                    We detected that you are looking away from the screen.<br>
-                    Please face the camera and maintain eye contact during the interview.<br>
-                    <strong id="head-turn-warn-text">Warning <span id="head-turn-warn-num">1</span> of 2 — next time the interview will end.</strong>
-                </div>
-                <button id="head-turn-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
-                    I'm Facing the Screen — Continue
-                </button>
-            </div>`;
+        headTurnOverlay.style.cssText = warnStyle;
+        headTurnOverlay.innerHTML = warnCard(
+            '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l2 2"/></svg>',
+            '#f59e0b',
+            'Please Face the Screen',
+            'We noticed you\'re looking away from the screen.<br>Please face the camera during the interview.<br><strong id="head-turn-warn-text" style="color:#f59e0b;">Warning <span id="head-turn-warn-num">1</span> of 2</strong>',
+            'head-turn-btn',
+            'I\'m Facing the Screen — Continue'
+        );
         document.body.appendChild(headTurnOverlay);
         document.getElementById('head-turn-btn').addEventListener('click', () => {
             headTurnOverlay.style.display = 'none';
             headTurnCount = 0;
         });
 
-        // Warning overlay for eye reading
+        // Eyes off screen warning
         const eyeReadOverlay = document.createElement('div');
         eyeReadOverlay.id = 'eye-read-overlay';
-        eyeReadOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9998;background:rgba(0,0,0,0.85);align-items:center;justify-content:center;';
-        eyeReadOverlay.innerHTML = `
-            <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
-                <div style="font-size:40px;margin-bottom:12px;">&#128065;</div>
-                <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Eyes Off Screen Detected</div>
-                <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                    Your eyes appear to be reading something off-screen.<br>
-                    Please focus on the camera during the interview.<br>
-                    <strong id="eye-read-warn-text">Warning <span id="eye-read-warn-num">1</span> of 2 — next time the interview will end.</strong>
-                </div>
-                <button id="eye-read-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
-                    I Understand — Continue
-                </button>
-            </div>`;
+        eyeReadOverlay.style.cssText = warnStyle;
+        eyeReadOverlay.innerHTML = warnCard(
+            '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+            '#8b5cf6',
+            'Eyes Off Screen',
+            'Your eyes appear to be looking away from the interview.<br>Please focus on the camera while answering.<br><strong id="eye-read-warn-text" style="color:#8b5cf6;">Warning <span id="eye-read-warn-num">1</span> of 2</strong>',
+            'eye-read-btn',
+            'I Understand — Continue'
+        );
         document.body.appendChild(eyeReadOverlay);
         document.getElementById('eye-read-btn').addEventListener('click', () => {
             eyeReadOverlay.style.display = 'none';
@@ -1561,19 +1587,37 @@
     let tabLeaveWarnings = 0;
     let screenShareStream = null;
 
-    // Warning overlay (created once, shown/hidden)
+    // Tab switch warning overlay
     const warningOverlay = document.createElement('div');
     warningOverlay.id = 'tab-warning-overlay';
-    warningOverlay.style.cssText = 'display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;';
+    warningOverlay.style.cssText = 'position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:linear-gradient(135deg,rgba(0,0,0,0.92) 0%,rgba(30,10,10,0.95) 100%);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);animation:warnFadeIn 0.3s ease;';
     warningOverlay.innerHTML = `
-        <div style="background:#fff;border-radius:14px;padding:32px 36px;max-width:420px;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
-            <div style="font-size:40px;margin-bottom:12px;">&#9888;</div>
-            <div style="font-size:18px;font-weight:700;color:#111;margin-bottom:8px;">Do Not Leave the Interview</div>
-            <div style="font-size:14px;color:#555;line-height:1.6;margin-bottom:20px;">
-                You switched away from the interview tab.<br>
-                This has been recorded. <strong>If you leave again, the interview will be ended automatically.</strong>
+        <div style="background:#fff;border-radius:20px;padding:36px 40px;max-width:440px;width:90%;text-align:center;
+                    box-shadow:0 20px 60px rgba(0,0,0,0.4),0 0 0 1px rgba(255,255,255,0.05);
+                    animation:warnSlideUp 0.35s ease;">
+            <div style="width:64px;height:64px;border-radius:50%;background:#dc2626;
+                        display:flex;align-items:center;justify-content:center;
+                        margin:0 auto 16px;
+                        box-shadow:0 4px 16px rgba(220,38,38,0.3);">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
             </div>
-            <button id="tab-warning-btn" style="padding:10px 28px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;">
+            <div style="font-family:'DM Sans',sans-serif;font-size:20px;font-weight:700;color:#111;
+                        margin-bottom:6px;letter-spacing:-0.3px;">Do Not Leave the Interview</div>
+            <div style="font-family:'DM Sans',sans-serif;font-size:14px;color:#666;line-height:1.7;
+                        margin-bottom:24px;max-width:340px;margin-left:auto;margin-right:auto;">
+                You switched away from the interview tab.<br>
+                This has been recorded.<br>
+                <span style="color:#dc2626;font-weight:600;">If you leave again, the interview will end automatically.</span>
+            </div>
+            <button id="tab-warning-btn" style="padding:12px 32px;background:linear-gradient(135deg,#111 0%,#333 100%);
+                    color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;
+                    font-size:14px;font-weight:600;cursor:pointer;
+                    box-shadow:0 4px 12px rgba(0,0,0,0.2);transition:all 0.15s ease;"
+                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 16px rgba(0,0,0,0.3)'"
+                onmouseout="this.style.transform='none';this.style.boxShadow='0 4px 12px rgba(0,0,0,0.2)'">
                 I Understand — Continue Interview
             </button>
         </div>`;
