@@ -1146,12 +1146,15 @@ def save_candidate_history(session):
     """Save session summary for returning candidate lookup."""
     candidate_key = session.get("candidate_key", "")
     if not candidate_key: return
-    scored = [h for h in session["history"] if h.get("evaluation") and h["phase"]!="warmup" and (h.get("evaluation") or {}).get("quality") not in ("warmup",None)]
+    scored = [h for h in session["history"] if h.get("evaluation") and h["phase"]!="warmup" and (h.get("evaluation") or {}).get("quality") not in ("warmup",None,"no_answer")]
     scores = []
     for h in scored:
-        try: scores.append(int(h["evaluation"].get("score") or 5))
-        except: scores.append(5)
-    avg = sum(scores)/len(scores) if scores else 5
+        try: scores.append(int(h["evaluation"].get("score") or 0))
+        except: pass
+    if not scores:
+        print(f"[History] Skipped — no answered questions for {candidate_key}")
+        return
+    avg = sum(scores)/len(scores)
     tp = session.get("topic_performance", {})
     weak = [t for t,d in tp.items() if d.get("avg_score",5) < 4]
     strong = [t for t,d in tp.items() if d.get("avg_score",0) >= 7]
