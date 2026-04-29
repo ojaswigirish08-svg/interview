@@ -733,20 +733,18 @@
                                 let rG = Math.max(0, Math.min(1, (riX - rMin) / rW));
                                 currentGaze = (lG + rG) / 2;
 
-                                // Vertical gaze — iris Y relative to eye top/bottom
-                                const liY = lm[468].y;
-                                const riY = lm[473].y;
-                                const leftEyeTop = lm[159].y;    // left eye upper lid
-                                const leftEyeBot = lm[145].y;    // left eye lower lid
-                                const rightEyeTop = lm[386].y;   // right eye upper lid
-                                const rightEyeBot = lm[374].y;   // right eye lower lid
-                                const lEyeH = Math.abs(leftEyeBot - leftEyeTop);
-                                const rEyeH = Math.abs(rightEyeBot - rightEyeTop);
+                                // Vertical gaze — use nose tip Y relative to face height
+                                // When looking up: nose tip moves up relative to face
+                                // When looking down: nose tip moves down
+                                // More reliable than iris Y (iris barely moves vertically)
+                                const faceTop = lm[10].y;     // forehead top
+                                const faceBot = lm[152].y;    // chin bottom
+                                const faceHeight = Math.abs(faceBot - faceTop);
                                 let gazeY = 0.5;
-                                if (lEyeH > 0.002 && rEyeH > 0.002) {
-                                    const lVG = (liY - Math.min(leftEyeTop, leftEyeBot)) / lEyeH;
-                                    const rVG = (riY - Math.min(rightEyeTop, rightEyeBot)) / rEyeH;
-                                    gazeY = Math.max(0, Math.min(1, (lVG + rVG) / 2));
+                                if (faceHeight > 0.05) {
+                                    // Nose position within face: 0 = top, 1 = bottom
+                                    const noseY = (noseTip.y - Math.min(faceTop, faceBot)) / faceHeight;
+                                    gazeY = Math.max(0, Math.min(1, noseY));
                                 }
 
                                 // Eyes looking away — horizontal
@@ -755,7 +753,7 @@
                                     eyeDirection = currentGaze < 0.40 ? 'left' : 'right';
                                 }
                                 // Eyes looking up (above laptop — e.g. notes on wall, person behind)
-                                else if (gazeY < 0.25) {
+                                else if (gazeY < 0.52) {
                                     eyeReading = true;
                                     eyeDirection = 'up';
                                 }
