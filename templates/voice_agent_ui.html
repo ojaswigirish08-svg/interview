@@ -1844,8 +1844,18 @@
         </div>`;
     document.body.appendChild(splitOverlay);
     document.getElementById('split-warn-btn').addEventListener('click', () => {
+        // Only allow continue if window is back to full screen
+        const ratio = window.innerWidth / window.screen.width;
+        if (ratio < 0.80) {
+            // Still split — don't dismiss, update text
+            document.getElementById('split-warn-text').innerHTML = '<span style="color:#dc2626;font-weight:700;">Please maximize your window first to continue.</span>';
+            return;
+        }
         splitOverlay.style.display = 'none';
         splitDetected = false;
+        // Resume audio
+        if (currentAudio && currentAudio.paused) { try { currentAudio.play(); } catch(e) {} }
+        if ('speechSynthesis' in window && speechSynthesis.paused) { speechSynthesis.resume(); }
     });
 
     window.addEventListener('resize', () => {
@@ -1855,12 +1865,17 @@
         const screenWidth = window.screen.width;
         const widthRatio = currentWidth / screenWidth;
 
-        // If window is less than 80% of screen width — likely split screen
+        // If window is less than 80% of screen width — split screen detected
         if (widthRatio < 0.80 && !splitDetected) {
             splitDetected = true;
             splitWarnings++;
             sendAntiCheat('split_screen', `width:${currentWidth},screen:${screenWidth},ratio:${widthRatio.toFixed(2)},warnings:${splitWarnings}`);
-            console.log(`[Anti-cheat] Split screen detected: window ${currentWidth}px / screen ${screenWidth}px = ${(widthRatio*100).toFixed(0)}%`);
+            console.log(`[Anti-cheat] Split screen detected — interview PAUSED`);
+
+            // PAUSE the interview — stop audio + recording
+            if (currentAudio) { try { currentAudio.pause(); } catch(e) {} }
+            if ('speechSynthesis' in window) { speechSynthesis.cancel(); }
+            if (isRecording) { stopRecording(); }
 
             if (splitWarnings <= 2) {
                 document.getElementById('split-warn-num').textContent = splitWarnings;
@@ -1875,6 +1890,14 @@
                 sendAntiCheat('split_screen_termination', `split_${splitWarnings}_times`);
                 endSessionWithMessage('Interview ended — window was split or resized repeatedly.');
             }
+        }
+
+        // Auto-dismiss if user maximizes while popup is showing
+        if (widthRatio >= 0.90 && splitDetected && splitOverlay.style.display === 'flex') {
+            splitOverlay.style.display = 'none';
+            splitDetected = false;
+            // Resume audio
+            if (currentAudio && currentAudio.paused) { try { currentAudio.play(); } catch(e) {} }
         }
 
         // Reset when maximized again
