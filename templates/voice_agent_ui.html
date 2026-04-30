@@ -1832,7 +1832,7 @@
             <div style="font-family:'DM Sans',sans-serif;font-size:14px;color:#666;line-height:1.7;margin-bottom:24px;">
                 Your interview window appears to be split or resized.<br>
                 Please maximize the window for the best experience.<br>
-                <strong id="split-warn-text" style="color:#d97706;">Warning <span id="split-warn-num">1</span> of 2</strong>
+                <strong style="color:#d97706;"><span id="split-warn-text">Warning 1 of 2</span></strong>
             </div>
             <button id="split-warn-btn" style="padding:12px 32px;background:linear-gradient(135deg,#111 0%,#333 100%);
                     color:#fff;border:none;border-radius:10px;font-family:'DM Sans',sans-serif;
@@ -1847,8 +1847,8 @@
         // Only allow continue if window is back to full screen
         const ratio = window.innerWidth / window.screen.width;
         if (ratio < 0.80) {
-            // Still split — don't dismiss, update text
-            document.getElementById('split-warn-text').innerHTML = '<span style="color:#dc2626;font-weight:700;">Please maximize your window first to continue.</span>';
+            document.getElementById('split-warn-text').textContent = 'Please maximize your window first to continue.';
+            document.getElementById('split-warn-text').style.color = '#dc2626';
             return;
         }
         splitOverlay.style.display = 'none';
@@ -1878,9 +1878,12 @@
             if (isRecording) { stopRecording(); }
 
             if (splitWarnings <= 2) {
-                document.getElementById('split-warn-num').textContent = splitWarnings;
-                if (splitWarnings === 2) {
-                    document.getElementById('split-warn-text').innerHTML = '<span style="color:#dc2626;font-weight:700;">Final warning — using split screen again will end the interview.</span>';
+                if (splitWarnings === 1) {
+                    document.getElementById('split-warn-text').textContent = 'Warning 1 of 2';
+                    document.getElementById('split-warn-text').style.color = '#d97706';
+                } else if (splitWarnings === 2) {
+                    document.getElementById('split-warn-text').textContent = 'Final warning — split screen again will end the interview.';
+                    document.getElementById('split-warn-text').style.color = '#dc2626';
                 }
                 splitOverlay.style.display = 'flex';
             }
