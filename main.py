@@ -680,6 +680,7 @@ def count_active_signals(session, scored_history):
     if any(e["event_type"]=="canary_triggered" for e in anticheat): count += 1
     if any(e["event_type"]=="head_turned"     for e in anticheat): count += 1
     if any(e["event_type"]=="eye_away"        for e in anticheat): count += 1
+    if any(e["event_type"]=="split_screen"   for e in anticheat): count += 1
     if any(e["event_type"]=="ai_answer_overlay" for e in anticheat): count += 1
     if any(e["event_type"]=="ai_extension_detected" for e in anticheat): count += 1
     flags_all = []
@@ -738,6 +739,11 @@ def compute_suspicion_score(session, scored_history):
     if eye_away_events:
         suspicion += len(eye_away_events) * 10
         flags.append(f"Eyes looking away {len(eye_away_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_away_events[:3])})")
+    # Split screen detected (MEDIUM — candidate may be reading from another app)
+    split_events = [ev for ev in anticheat if ev["event_type"]=="split_screen"]
+    if split_events:
+        suspicion += len(split_events) * 8
+        flags.append(f"Split screen detected {len(split_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in split_events[:3])})")
     # AI answer overlay detected on screen (VERY HIGH — direct evidence of cheating tool)
     ai_overlay_events = [ev for ev in anticheat if ev["event_type"]=="ai_answer_overlay"]
     if ai_overlay_events:
@@ -1873,7 +1879,7 @@ async def anticheat_event(data: AntiCheatEvent):
     session["anticheat_events"].append({"event_type":data.event_type,"turn":data.turn,"timestamp":data.timestamp,"metadata":data.metadata})
 
     # Increase difficulty for serious cheating events (not head turn or eye movement)
-    if data.event_type in ("tab_switch","paste_event","dom_overlay","ai_answer_overlay","ai_extension_detected") and session.get("phase") == "interview":
+    if data.event_type in ("tab_switch","paste_event","dom_overlay","ai_answer_overlay","ai_extension_detected","split_screen") and session.get("phase") == "interview":
         old_diff = session.get("difficulty_level", 1)
         new_diff = min(4, old_diff + 1)
         if new_diff > old_diff:
