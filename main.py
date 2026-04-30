@@ -284,6 +284,11 @@ if ELEVENLABS_API_KEY:
 LMNT_API_KEY  = os.getenv("LMNT_API_KEY", "")
 LMNT_VOICE_ID = os.getenv("LMNT_VOICE_ID", "")
 TTS_ENABLED   = os.getenv("TTS_ENABLED", "true").lower() == "true"
+SAPLING_API_KEY = os.getenv("SAPLING_API_KEY", "")
+if SAPLING_API_KEY:
+    print("Sapling AI content detector ready.")
+else:
+    print("Sapling AI detector not configured (SAPLING_API_KEY not set).")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
 
@@ -683,6 +688,8 @@ def count_active_signals(session, scored_history):
     if any(e["event_type"]=="split_screen"   for e in anticheat): count += 1
     if any(e["event_type"]=="ai_answer_overlay" for e in anticheat): count += 1
     if any(e["event_type"]=="ai_extension_detected" for e in anticheat): count += 1
+    # AI-generated answer detected by Sapling
+    if any("ai_generated_answer" in h.get("behavioral_flags",[]) for h in scored_history): count += 1
     flags_all = []
     for h in scored_history: flags_all.extend(h.get("behavioral_flags",[]))
     if "suspiciously_clean_speech"   in flags_all: count += 1
@@ -754,6 +761,12 @@ def compute_suspicion_score(session, scored_history):
     if ai_ext_events:
         suspicion += len(ai_ext_events) * 20
         flags.append(f"AI browser extension detected (e.g. Parakeet, Copilot)")
+    # AI-generated answers detected by Sapling (VERY HIGH)
+    ai_gen_turns = [h for h in scored_history if "ai_generated_answer" in h.get("behavioral_flags",[])]
+    if ai_gen_turns:
+        suspicion += len(ai_gen_turns) * 20
+        ai_scores = [h.get("ai_detection",{}).get("ai_score",0) for h in ai_gen_turns]
+        flags.append(f"AI-generated answers detected in {len(ai_gen_turns)} response(s) (avg AI score: {sum(ai_scores)/len(ai_scores):.0%})")
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags",[])]
     if len(clean_turns)>=3: suspicion+=len(clean_turns)*8; flags.append(f"Filler words vanished in {len(clean_turns)} answers")
     pronoun_turns = [h for h in scored_history if "personal_pronouns_vanished" in h.get("behavioral_flags",[])]
@@ -1143,6 +1156,41 @@ def generate_question(session, candidate_answer=None):
     result["question_type"]=q_type; result["current_skill"]=current_skill
     result["_extra"]=extra; result["evaluation"]=evaluation
     return result
+
+
+# ════════════════════════════════════════════════════════════
+# AI CONTENT DETECTION (Sapling.ai)
+# ════════════════════════════════════════════════════════════
+def detect_ai_content(text: str, session_id: str = "unknown") -> dict:
+    """Check if answer text is AI-generated using Sapling.ai API."""
+    if not SAPLING_API_KEY or not text or len(text.strip()) < 20:
+        return {"ai_score": 0.0, "is_ai": False, "checked": False}
+    try:
+        t0 = time.time()
+        resp = http_requests.post(
+            "https://api.sapling.ai/api/v1/aidetect",
+            json={"key": SAPLING_API_KEY, "text": text},
+            timeout=5
+        )
+        latency = time.time() - t0
+        if resp.status_code == 200:
+            data = resp.json()
+            ai_score = data.get("score", 0.0)
+            sentence_scores = data.get("sentence_scores", [])
+            is_ai = ai_score > 0.7  # 70%+ = likely AI generated
+            print(f"[AI Detect] score={ai_score:.2f} is_ai={is_ai} latency={latency:.2f}s | '{text[:50]}'")
+            return {
+                "ai_score": round(ai_score, 3),
+                "is_ai": is_ai,
+                "checked": True,
+                "sentence_scores": sentence_scores[:5],  # Top 5 sentences
+            }
+        else:
+            print(f"[AI Detect] API error: {resp.status_code} {resp.text[:100]}")
+            return {"ai_score": 0.0, "is_ai": False, "checked": False}
+    except Exception as e:
+        print(f"[AI Detect] Failed: {e}")
+        return {"ai_score": 0.0, "is_ai": False, "checked": False}
 
 
 # ════════════════════════════════════════════════════════════
@@ -1652,6 +1700,18 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         current_entry["pronoun_rate"]=count_personal_pronouns(data.answer); current_entry["correction_rate"]=count_self_corrections(data.answer)
         dev=analyze_behavioral_deviation(session,data.answer,data.answer_duration_sec,data.word_count,data.thinking_pause_sec,data.input_mode,current_entry.get("difficulty","basic"))
         current_entry["behavioral_flags"]=dev["flags"]; current_entry["behavioral_deviation"]=dev["deviation_score"]
+
+        # AI content detection — check if answer is AI-generated (only for technical answers with enough text)
+        if session["phase"] == "interview" and data.word_count >= 15:
+            ai_result = detect_ai_content(data.answer, session_id=sid)
+            current_entry["ai_detection"] = ai_result
+            if ai_result.get("is_ai"):
+                current_entry["behavioral_flags"].append("ai_generated_answer")
+                session["running_suspicion"] = session.get("running_suspicion", 0) + 15
+                record_notable(session, session["turn"]-1, current_entry.get("question",""), data.answer,
+                    "concern_flag", f"AI-generated answer detected at turn {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
+                print(f"[AI Detect] WARNING: AI-generated answer at turn {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
+
     if session["phase"]=="greeting":
         if session.get("skip_warmup"):
             # Returning candidate (2+ interviews) — skip warmup, go to technical
@@ -1992,7 +2052,7 @@ async def admin_session_detail(session_id: str, _=Depends(require_reviewer_or_ad
     turn_log=[]
     for h in history:
         eval_data=h.get("evaluation") or {}
-        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"notes":eval_data.get("notes","")})
+        turn_log.append({"turn":h["turn"],"phase":h["phase"],"question_type":h.get("question_type",""),"topic":h.get("topic",""),"difficulty":h.get("difficulty",""),"question":h.get("question",""),"answer":h.get("answer","") or "","word_count":h.get("word_count",0),"answer_duration_sec":round(h.get("answer_duration_sec",0),1),"thinking_pause_sec":round(h.get("thinking_pause_sec",0),1),"input_mode":h.get("input_mode","text"),"filler_rate":round(h.get("filler_rate",0),3),"pronoun_rate":round(h.get("pronoun_rate",0),3),"correction_rate":round(h.get("correction_rate",0),3),"behavioral_flags":h.get("behavioral_flags",[]),"behavioral_deviation":round(h.get("behavioral_deviation",0),2),"above_level":h.get("above_level",False),"contradiction_inconsistency":h.get("contradiction_inconsistency",False),"quality":eval_data.get("quality",""),"accuracy":eval_data.get("accuracy",""),"confidence_level":eval_data.get("confidence_level",""),"quadrant":eval_data.get("quadrant",""),"score":eval_data.get("score",""),"score_reasoning":eval_data.get("score_reasoning",""),"ai_detection":h.get("ai_detection",{}),"notes":eval_data.get("notes","")})
     contradiction=session.get("contradiction_asked",{}); contradiction_log=[]
     for key,val in contradiction.items():
         if isinstance(val,str) and val in ("angle_1_asked","complete"):
