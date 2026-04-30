@@ -365,7 +365,7 @@ textarea::placeholder{color:var(--t4)}
     <div class="sec-label">All sessions</div>
     <div class="tbl-wrap">
       <table>
-        <thead><tr><th>Candidate</th><th>Domain</th><th>Level</th><th>Phase</th><th>Score</th><th>Turns</th><th>Risk</th><th>Trajectory</th><th>Started</th></tr></thead>
+        <thead><tr><th>Candidate</th><th>Domain</th><th>Level</th><th>Phase</th><th>Score</th><th>Questions</th><th>Risk</th><th>Trajectory</th><th>Started</th></tr></thead>
         <tbody id="sessions-tbody"><tr><td colspan="9" class="loading-txt"><div class="spinner"></div></td></tr></tbody>
       </table>
     </div>
@@ -469,7 +469,7 @@ textarea::placeholder{color:var(--t4)}
       <div class="sec-label">Completed sessions — select to review</div>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Candidate</th><th>Domain</th><th>Score</th><th>Turns</th><th>Reviews done</th><th>Status</th></tr></thead>
+          <thead><tr><th>Candidate</th><th>Domain</th><th>Score</th><th>Questions</th><th>Reviews done</th><th>Status</th></tr></thead>
           <tbody id="rev-tbody"><tr><td colspan="6" class="loading-txt"><div class="spinner"></div></td></tr></tbody>
         </table>
       </div>
@@ -554,10 +554,10 @@ const MOCK_DETAIL = {
   contradiction_log:[{topic:'clock tree synthesis',status:'complete',angle1_score:8,inconsistent:false}],
   recovery_log:[{turn:8,topic:'Timing Closure',hint_text:'Think about buffer sizing and cell swapping.',recovery_quality:'partial',recovery_score:6}],
   notable_moments:[
-    {turn:10,moment_type:'positive_signal',question:'Why does IR drop cause timing failures?',answer_excerpt:'Because IR drop reduces the actual supply voltage...',detail:'Strong answer on intermediate IR drop at turn 10'},
-    {turn:8,moment_type:'positive_signal',question:'ECO options for 120ps violation',answer_excerpt:"I don't know the specific ECO steps...",detail:'Honest admission at turn 8 on Timing Closure — intellectual honesty signal'},
+    {turn:10,moment_type:'positive_signal',question:'Why does IR drop cause timing failures?',answer_excerpt:'Because IR drop reduces the actual supply voltage...',detail:'Strong answer on intermediate IR drop at question 10'},
+    {turn:8,moment_type:'positive_signal',question:'ECO options for 120ps violation',answer_excerpt:"I don't know the specific ECO steps...",detail:'Honest admission at question 8 on Timing Closure — intellectual honesty signal'},
   ],
-  genuine_signals:['Fast partial recovery at turn 9 on Timing Closure'],
+  genuine_signals:['Fast partial recovery at question 9 on Timing Closure'],
   observability:{session_id:'sess-001',total_calls:34,success_calls:33,failure_calls:1,total_cost_usd:0.00214,avg_latency_ms:847},
 };
 
@@ -937,7 +937,7 @@ function renderAcDetail(d) {
     </div>
 
     <div class="card" style="margin-bottom:14px">
-      <div class="sec-label" style="margin-bottom:10px">Turn-by-turn log</div>
+      <div class="sec-label" style="margin-bottom:10px">Question-by-question log</div>
       <div class="tbl-wrap" style="margin:0">
         <table>
           <thead><tr><th>Turn</th><th>Topic</th><th>Difficulty</th><th>Score</th><th>Quadrant</th><th>Behavioral flags</th></tr></thead>

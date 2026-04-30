@@ -650,9 +650,9 @@ def evaluate_recovery(session, current_turn, answer, eval_score):
             hint["recovery_speed"] = "fast"
             if eval_score >= 7:
                 hint["recovery_quality"] = "complete"; hint["recovery_score"] = eval_score
-                session.setdefault("genuine_signals",[]).append(f"Fast complete recovery at turn {current_turn} on {hint['topic']}")
+                session.setdefault("genuine_signals",[]).append(f"Fast complete recovery at question {current_turn} on {hint['topic']}")
                 if eval_score == 10:
-                    session.setdefault("suspicion_events",[]).append({"type":"perfect_recovery_after_hint","turn":current_turn,"weight":15,"detail":f"Scored 10/10 immediately after hint on {hint['topic']} at turn {current_turn}"})
+                    session.setdefault("suspicion_events",[]).append({"type":"perfect_recovery_after_hint","turn":current_turn,"weight":15,"detail":f"Scored 10/10 immediately after hint on {hint['topic']} at question {current_turn}"})
             elif eval_score >= 4: hint["recovery_quality"]="partial"; hint["recovery_score"]=eval_score
             else: hint["recovery_quality"]="none"; hint["recovery_score"]=eval_score
 
@@ -714,7 +714,7 @@ def compute_topic_suspicion(session, scored_history):
         prev_tab = [e for e in anticheat if e["event_type"]=="tab_switch" and e["turn"]==h.get("turn",0)-1]
         if prev_tab and (h.get("evaluation") or {}).get("quality")=="strong":
             topic_suspicion[topic]["score"] += 20
-            topic_suspicion[topic]["flags"].append(f"Tab switch before strong answer on {topic} at turn {h['turn']}")
+            topic_suspicion[topic]["flags"].append(f"Tab switch before strong answer on {topic} at question {h['turn']}")
         for flag in h.get("behavioral_flags",[]):
             if flag in ("suspiciously_clean_speech","personal_pronouns_vanished","low_pause_variance"):
                 topic_suspicion[topic]["score"] += 10
@@ -729,28 +729,28 @@ def compute_suspicion_score(session, scored_history):
             next_ans = next((h for h in scored_history if h.get("turn",0)>ev["turn"] and h.get("evaluation")),None)
             if next_ans:
                 q = next_ans["evaluation"].get("quality",""); diff = next_ans.get("difficulty","basic"); topic = next_ans.get("topic","unknown")
-                if q=="strong" and diff in ("advanced","expert"): suspicion+=20; flags.append(f"Tab switch at T{ev['turn']} → strong {diff} {topic} answer (T{next_ans['turn']})")
-                elif q=="strong": suspicion+=8; flags.append(f"Tab switch at T{ev['turn']} → strong answer on {topic}")
+                if q=="strong" and diff in ("advanced","expert"): suspicion+=20; flags.append(f"Tab switch at Q{ev['turn']} → strong {diff} {topic} answer (Q{next_ans['turn']})")
+                elif q=="strong": suspicion+=8; flags.append(f"Tab switch at Q{ev['turn']} → strong answer on {topic}")
                 else: suspicion+=2
             else: suspicion+=2
-        if ev["event_type"]=="paste_event": suspicion+=15; flags.append(f"Paste event at T{ev['turn']}")
-        if ev["event_type"] in ("dom_overlay","canary_triggered"): suspicion+=20; flags.append(f"AI browser extension detected at T{ev['turn']}")
-        if ev["event_type"]=="screen_share": suspicion+=12; flags.append(f"Screen sharing at T{ev['turn']}")
+        if ev["event_type"]=="paste_event": suspicion+=15; flags.append(f"Paste event at Q{ev['turn']}")
+        if ev["event_type"] in ("dom_overlay","canary_triggered"): suspicion+=20; flags.append(f"AI browser extension detected at Q{ev['turn']}")
+        if ev["event_type"]=="screen_share": suspicion+=12; flags.append(f"Screen sharing at Q{ev['turn']}")
     # Head turned away (MEDIUM)
     head_turn_events = [ev for ev in anticheat if ev["event_type"]=="head_turned"]
     if head_turn_events:
         suspicion += len(head_turn_events) * 8
-        flags.append(f"Candidate looked away from screen {len(head_turn_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in head_turn_events[:3])})")
+        flags.append(f"Candidate looked away from screen {len(head_turn_events)} time(s) (questions {', '.join(str(ev['turn']) for ev in head_turn_events[:3])})")
     # Eyes looking away while head faces camera (HIGH)
     eye_away_events = [ev for ev in anticheat if ev["event_type"]=="eye_away"]
     if eye_away_events:
         suspicion += len(eye_away_events) * 10
-        flags.append(f"Eyes looking away {len(eye_away_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_away_events[:3])})")
+        flags.append(f"Eyes looking away {len(eye_away_events)} time(s) while facing camera (questions {', '.join(str(ev['turn']) for ev in eye_away_events[:3])})")
     # Split screen detected (MEDIUM — candidate may be reading from another app)
     split_events = [ev for ev in anticheat if ev["event_type"]=="split_screen"]
     if split_events:
         suspicion += len(split_events) * 8
-        flags.append(f"Split screen detected {len(split_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in split_events[:3])})")
+        flags.append(f"Split screen detected {len(split_events)} time(s) (questions {', '.join(str(ev['turn']) for ev in split_events[:3])})")
     # AI answer overlay detected on screen (VERY HIGH — direct evidence of cheating tool)
     ai_overlay_events = [ev for ev in anticheat if ev["event_type"]=="ai_answer_overlay"]
     if ai_overlay_events:
@@ -775,11 +775,11 @@ def compute_suspicion_score(session, scored_history):
     if len(correction_turns)>=2: suspicion+=len(correction_turns)*5; flags.append(f"Self-correction pattern disappeared in {len(correction_turns)} answers")
     if any("low_pause_variance" in h.get("behavioral_flags",[]) for h in scored_history): suspicion+=15; flags.append("Identical thinking pause across all difficulty levels")
     instant_hard = [h for h in scored_history if any(f.startswith("instant_answer_on_") for f in h.get("behavioral_flags",[]))]
-    if instant_hard: suspicion+=len(instant_hard)*8; flags.append(f"Instant answers on hard questions at T{', T'.join(str(h['turn']) for h in instant_hard[:3])}")
+    if instant_hard: suspicion+=len(instant_hard)*8; flags.append(f"Instant answers on hard questions at Q{', Q'.join(str(h['turn']) for h in instant_hard[:3])}")
     honest_count = sum(1 for h in scored_history if (h.get("evaluation") or {}).get("quality")=="honest_admission")
     if len(scored_history)>=8 and honest_count==0: suspicion+=12; flags.append("Zero honest admissions in full interview")
     df_turns = [h for h in scored_history if (h.get("evaluation") or {}).get("quadrant")=="dangerous_fake"]
-    if len(df_turns)>=3: suspicion+=len(df_turns)*8; flags.append(f"Confident+wrong pattern at T{', T'.join(str(h['turn']) for h in df_turns[:3])}")
+    if len(df_turns)>=3: suspicion+=len(df_turns)*8; flags.append(f"Confident+wrong pattern at Q{', Q'.join(str(h['turn']) for h in df_turns[:3])}")
     bwc = (session.get("behavioral_baseline") or {}).get("avg_word_count",60)
     spike_turns = [h for h in scored_history if "answer_length_spike_on_hard_question" in h.get("behavioral_flags",[])]
     if spike_turns: suspicion+=len(spike_turns)*10; flags.append(f"Answer length spiked on hard questions")
@@ -1507,8 +1507,8 @@ def generate_report(session: dict) -> dict:
         if state=="complete":
             contradiction_results.append({"topic":topic,"inconsistent":session["contradiction_asked"].get(f"{topic}_inconsistent",False),"angle1_score":session["contradiction_asked"].get(f"{topic}_angle1_score")})
     hint_events=session.get("hint_events",[])
-    recovery_summary=[f"Turn {h['turn']} ({h['topic']}): hint given, recovery was {h['recovery_quality']} (score: {h.get('recovery_score','N/A')})" for h in hint_events if h.get("recovery_quality")]
-    transcript="\n".join([f"[T{h['turn']}] {h.get('question_type','?')}/{h.get('difficulty','?')} topic={h.get('topic','?')}\nQ: {h['question']}\nA: {(h.get('answer') or '[no answer]')[:300]}\nEval: quality={(h.get('evaluation') or {}).get('quality','?')} score={(h.get('evaluation') or {}).get('score','?')}" for h in history if h["phase"]!="warmup"])[:5500]
+    recovery_summary=[f"Question {h['turn']} ({h['topic']}): hint given, recovery was {h['recovery_quality']} (score: {h.get('recovery_score','N/A')})" for h in hint_events if h.get("recovery_quality")]
+    transcript="\n".join([f"[Q{h['turn']}] {h.get('question_type','?')}/{h.get('difficulty','?')} topic={h.get('topic','?')}\nQ: {h['question']}\nA: {(h.get('answer') or '[no answer]')[:300]}\nEval: quality={(h.get('evaluation') or {}).get('quality','?')} score={(h.get('evaluation') or {}).get('score','?')}" for h in history if h["phase"]!="warmup"])[:5500]
     resources=DOMAIN_RESOURCES.get(resume["domain"],[])
     signal_count=suspicion_data.get("signal_count",0)
     narrative_prompt=f"""You are a senior VLSI mentor generating a mock interview performance report.
@@ -1709,7 +1709,7 @@ async def submit_answer(request: Request, data: AnswerSubmit):
                 current_entry["behavioral_flags"].append("ai_generated_answer")
                 session["running_suspicion"] = session.get("running_suspicion", 0) + 15
                 record_notable(session, session["turn"]-1, current_entry.get("question",""), data.answer,
-                    "concern_flag", f"AI-generated answer detected at turn {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
+                    "concern_flag", f"AI-generated answer detected at question {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
                 print(f"[AI Detect] WARNING: AI-generated answer at turn {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
 
     if session["phase"]=="greeting":
@@ -1773,20 +1773,20 @@ async def submit_answer(request: Request, data: AnswerSubmit):
             session.setdefault("off_topic_count", 0)
             session["off_topic_count"] += 1
             print(f"[Interview] Off-topic answer #{session['off_topic_count']} at turn {session['turn']-1}")
-            record_notable(session, session["turn"]-1, current_entry["question"], data.answer, "concern_flag", f"Off-topic answer at turn {session['turn']-1}")
+            record_notable(session, session["turn"]-1, current_entry["question"], data.answer, "concern_flag", f"Off-topic answer at question {session['turn']-1}")
         else:
             session["off_topic_count"] = 0
 
         complexity=assess_answer_complexity(session,data.answer,score,current_entry.get("difficulty","basic"),session["resume"]["level"])
         current_entry["above_level"]=complexity["above_level"]
         if complexity["above_level"] and not session.get("smooth_talker_detected"):
-            record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Answer sophistication above calibrated level at turn {session['turn']-1}: {complexity['flag']}")
+            record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Answer sophistication above calibrated level at question {session['turn']-1}: {complexity['flag']}")
         extra=result.get("_extra")
         if extra and extra.get("angle") and extra.get("pair"):
             pair=extra["pair"]; angle=extra["angle"]
             inconsistent=record_contradiction_result(session,pair["topic"],angle,eval_data,session["turn"]-1)
             current_entry["contradiction_inconsistency"]=inconsistent
-            if inconsistent: record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"concern_flag",f"Contradiction detected on '{pair['topic']}' at turn {session['turn']-1}")
+            if inconsistent: record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"concern_flag",f"Contradiction detected on '{pair['topic']}' at question {session['turn']-1}")
         elif current_entry.get("question_type")=="contradiction":
             topic=current_entry.get("topic","")
             if topic and session["contradiction_asked"].get(topic)!="angle_1_asked":
@@ -1795,9 +1795,9 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         update_smooth_talker(session,eval_data,current_entry.get("question_type",""))
         if result.get("hint_given"): record_hint(session,session["turn"]-1,current_entry.get("topic",""),result.get("hint_text","Hint given"))
         evaluate_recovery(session,session["turn"]-1,data.answer,score)
-        if quality=="honest_admission": record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Honest admission at turn {session['turn']-1} on {current_entry.get('topic','')}")
-        elif eval_data.get("quadrant")=="dangerous_fake": record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"concern_flag",f"Confident+wrong at turn {session['turn']-1} on {current_entry.get('topic','')}")
-        elif quality=="strong" and current_entry.get("difficulty") in ("advanced","expert"): record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Strong answer on {current_entry.get('difficulty','')} {current_entry.get('topic','')} at turn {session['turn']-1}")
+        if quality=="honest_admission": record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Honest admission at question {session['turn']-1} on {current_entry.get('topic','')}")
+        elif eval_data.get("quadrant")=="dangerous_fake": record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"concern_flag",f"Confident+wrong at question {session['turn']-1} on {current_entry.get('topic','')}")
+        elif quality=="strong" and current_entry.get("difficulty") in ("advanced","expert"): record_notable(session,session["turn"]-1,current_entry["question"],data.answer,"positive_signal",f"Strong answer on {current_entry.get('difficulty','')} {current_entry.get('topic','')} at question {session['turn']-1}")
         if quality=="strong": session["consecutive_strong"]+=1; session["consecutive_weak"]=0
         elif quality=="weak": session["consecutive_weak"]+=1; session["consecutive_strong"]=0
         else: session["consecutive_strong"]=0; session["consecutive_weak"]=0
@@ -1823,7 +1823,7 @@ async def submit_answer(request: Request, data: AnswerSubmit):
 
         # Verification follow-up tracking: if last Q was verification and answer is now weak → strong cheat signal
         if current_entry.get("question_type") == "verification_followup" and quality in ("weak", "poor_articulation"):
-            session.setdefault("suspicion_events", []).append({"type": "failed_verification", "turn": session["turn"]-1, "weight": 20, "detail": f"Strong answer followed by weak verification at turn {session['turn']-1}"})
+            session.setdefault("suspicion_events", []).append({"type": "failed_verification", "turn": session["turn"]-1, "weight": 20, "detail": f"Strong answer followed by weak verification at question {session['turn']-1}"})
             session["running_suspicion"] += 20
 
         sc_hist=[h for h in session["history"] if h.get("evaluation") and (h.get("evaluation") or {}).get("quality") not in ("warmup",None) and h["phase"]!="warmup"]
