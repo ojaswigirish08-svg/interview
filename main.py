@@ -289,6 +289,41 @@ if SAPLING_API_KEY:
     print("Sapling AI content detector ready.")
 else:
     print("Sapling AI detector not configured (SAPLING_API_KEY not set).")
+COPYLEAKS_API_KEY = os.getenv("COPYLEAKS_API_KEY", "")
+COPYLEAKS_EMAIL = os.getenv("COPYLEAKS_EMAIL", "")
+_copyleaks_token = None
+_copyleaks_token_expiry = 0
+
+def _get_copyleaks_token():
+    """Get Copyleaks OAuth2 token (cached until expiry)."""
+    global _copyleaks_token, _copyleaks_token_expiry
+    if _copyleaks_token and time.time() < _copyleaks_token_expiry:
+        return _copyleaks_token
+    if not COPYLEAKS_EMAIL or not COPYLEAKS_API_KEY:
+        return None
+    try:
+        resp = http_requests.post(
+            "https://id.copyleaks.com/v3/account/login/api",
+            json={"email": COPYLEAKS_EMAIL, "key": COPYLEAKS_API_KEY},
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            _copyleaks_token = data.get("access_token")
+            _copyleaks_token_expiry = time.time() + 3500  # Token valid ~1 hour
+            print("[Copyleaks] Auth token obtained.")
+            return _copyleaks_token
+        else:
+            print(f"[Copyleaks] Auth failed: {resp.status_code} {resp.text[:100]}")
+    except Exception as e:
+        print(f"[Copyleaks] Auth error: {e}")
+    return None
+
+if COPYLEAKS_API_KEY and COPYLEAKS_EMAIL:
+    print("Copyleaks AI detector ready.")
+else:
+    print("Copyleaks AI detector not configured (COPYLEAKS_API_KEY/COPYLEAKS_EMAIL not set).")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_TTS_REF_AUDIO = None
 
@@ -1159,38 +1194,91 @@ def generate_question(session, candidate_answer=None):
 
 
 # ════════════════════════════════════════════════════════════
-# AI CONTENT DETECTION (Sapling.ai)
+# AI CONTENT DETECTION (Sapling.ai + Copyleaks)
 # ════════════════════════════════════════════════════════════
-def detect_ai_content(text: str, session_id: str = "unknown") -> dict:
-    """Check if answer text is AI-generated using Sapling.ai API."""
-    if not SAPLING_API_KEY or not text or len(text.strip()) < 20:
-        return {"ai_score": 0.0, "is_ai": False, "checked": False}
+def _detect_sapling(text):
+    """Sapling.ai AI detection."""
+    if not SAPLING_API_KEY: return None
     try:
-        t0 = time.time()
         resp = http_requests.post(
             "https://api.sapling.ai/api/v1/aidetect",
             json={"key": SAPLING_API_KEY, "text": text},
             timeout=5
         )
-        latency = time.time() - t0
         if resp.status_code == 200:
             data = resp.json()
-            ai_score = data.get("score", 0.0)
-            sentence_scores = data.get("sentence_scores", [])
-            is_ai = ai_score > 0.7  # 70%+ = likely AI generated
-            print(f"[AI Detect] score={ai_score:.2f} is_ai={is_ai} latency={latency:.2f}s | '{text[:50]}'")
-            return {
-                "ai_score": round(ai_score, 3),
-                "is_ai": is_ai,
-                "checked": True,
-                "sentence_scores": sentence_scores[:5],  # Top 5 sentences
-            }
+            return {"source": "sapling", "ai_score": round(data.get("score", 0.0), 3)}
+        return None
+    except: return None
+
+def _detect_copyleaks(text):
+    """Copyleaks AI detection."""
+    token = _get_copyleaks_token()
+    if not token: return None
+    try:
+        scan_id = f"vlsi-{uuid.uuid4().hex[:8]}"
+        resp = http_requests.post(
+            f"https://api.copyleaks.com/v2/writer-detector/{scan_id}/check",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            json={"text": text},
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # Copyleaks returns summary with AI probability
+            ai_score = data.get("summary", {}).get("ai", 0) / 100.0  # Convert 0-100 to 0-1
+            return {"source": "copyleaks", "ai_score": round(ai_score, 3)}
         else:
-            print(f"[AI Detect] API error: {resp.status_code} {resp.text[:100]}")
-            return {"ai_score": 0.0, "is_ai": False, "checked": False}
+            print(f"[Copyleaks] API error: {resp.status_code} {resp.text[:100]}")
+            return None
     except Exception as e:
-        print(f"[AI Detect] Failed: {e}")
-        return {"ai_score": 0.0, "is_ai": False, "checked": False}
+        print(f"[Copyleaks] Failed: {e}")
+        return None
+
+def detect_ai_content(text: str, session_id: str = "unknown") -> dict:
+    """Check if answer is AI-generated using Sapling + Copyleaks. Returns separate results."""
+    if not text or len(text.strip()) < 20:
+        return {"sapling": None, "copyleaks": None, "is_ai": False, "checked": False}
+
+    t0 = time.time()
+    sapling_result = None
+    copyleaks_result = None
+
+    # Run both detectors in parallel
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
+        if SAPLING_API_KEY:
+            futures["sapling"] = executor.submit(_detect_sapling, text)
+        if COPYLEAKS_API_KEY and COPYLEAKS_EMAIL:
+            futures["copyleaks"] = executor.submit(_detect_copyleaks, text)
+        for name, future in futures.items():
+            try:
+                r = future.result()
+                if name == "sapling": sapling_result = r
+                elif name == "copyleaks": copyleaks_result = r
+            except: pass
+
+    latency = time.time() - t0
+
+    # Determine is_ai: either detector says AI = flagged
+    sapling_ai = sapling_result["ai_score"] > 0.7 if sapling_result else False
+    copyleaks_ai = copyleaks_result["ai_score"] > 0.7 if copyleaks_result else False
+    is_ai = sapling_ai or copyleaks_ai
+
+    checked = sapling_result is not None or copyleaks_result is not None
+
+    print(f"[AI Detect] sapling={sapling_result['ai_score'] if sapling_result else 'N/A'} copyleaks={copyleaks_result['ai_score'] if copyleaks_result else 'N/A'} is_ai={is_ai} latency={latency:.2f}s")
+
+    return {
+        "sapling": {"score": sapling_result["ai_score"], "is_ai": sapling_ai} if sapling_result else None,
+        "copyleaks": {"score": copyleaks_result["ai_score"], "is_ai": copyleaks_ai} if copyleaks_result else None,
+        "is_ai": is_ai,
+        "checked": checked,
+    }
 
 
 # ════════════════════════════════════════════════════════════
