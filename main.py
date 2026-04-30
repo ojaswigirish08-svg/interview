@@ -679,8 +679,7 @@ def count_active_signals(session, scored_history):
     if any(e["event_type"]=="screen_share"    for e in anticheat): count += 1
     if any(e["event_type"]=="canary_triggered" for e in anticheat): count += 1
     if any(e["event_type"]=="head_turned"     for e in anticheat): count += 1
-    if any(e["event_type"]=="eye_reading"     for e in anticheat): count += 1
-    if any(e["event_type"]=="eye_scanning"    for e in anticheat): count += 1
+    if any(e["event_type"]=="eye_away"        for e in anticheat): count += 1
     if any(e["event_type"]=="ai_answer_overlay" for e in anticheat): count += 1
     if any(e["event_type"]=="ai_extension_detected" for e in anticheat): count += 1
     flags_all = []
@@ -734,16 +733,11 @@ def compute_suspicion_score(session, scored_history):
     if head_turn_events:
         suspicion += len(head_turn_events) * 8
         flags.append(f"Candidate looked away from screen {len(head_turn_events)} time(s) (turns {', '.join(str(ev['turn']) for ev in head_turn_events[:3])})")
-    # Eye reading — eyes looking off-screen while head faces camera (HIGH)
-    eye_read_events = [ev for ev in anticheat if ev["event_type"]=="eye_reading"]
-    if eye_read_events:
-        suspicion += len(eye_read_events) * 10
-        flags.append(f"Eyes reading off-screen {len(eye_read_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_read_events[:3])})")
-    # Eye scanning — left-right reading pattern on screen (VERY HIGH)
-    eye_scan_events = [ev for ev in anticheat if ev["event_type"]=="eye_scanning"]
-    if eye_scan_events:
-        suspicion += len(eye_scan_events) * 15
-        flags.append(f"Eyes scanning left-right reading pattern {len(eye_scan_events)} time(s) — likely reading text on screen (turns {', '.join(str(ev['turn']) for ev in eye_scan_events[:3])})")
+    # Eyes looking away while head faces camera (HIGH)
+    eye_away_events = [ev for ev in anticheat if ev["event_type"]=="eye_away"]
+    if eye_away_events:
+        suspicion += len(eye_away_events) * 10
+        flags.append(f"Eyes looking away {len(eye_away_events)} time(s) while facing camera (turns {', '.join(str(ev['turn']) for ev in eye_away_events[:3])})")
     # AI answer overlay detected on screen (VERY HIGH — direct evidence of cheating tool)
     ai_overlay_events = [ev for ev in anticheat if ev["event_type"]=="ai_answer_overlay"]
     if ai_overlay_events:

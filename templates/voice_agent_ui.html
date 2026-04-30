@@ -908,7 +908,7 @@
 
                 if (eyeReadCount >= EYE_READ_LIMIT) {
                     eyeReadWarnings++;
-                    sendAntiCheat('eye_reading', `warnings:${eyeReadWarnings},direction:${eyeDirection}`);
+                    sendAntiCheat('eye_away', `warnings:${eyeReadWarnings},direction:${eyeDirection}`);
 
                     if (eyeReadWarnings <= 2) {
                         document.getElementById('eye-read-warn-num').textContent = eyeReadWarnings;
@@ -921,7 +921,7 @@
 
                     if (eyeReadWarnings >= 3) {
                         eyeReadOverlay.style.display = 'none';
-                        sendAntiCheat('eye_reading_termination', `reading_${eyeReadWarnings}_times`);
+                        sendAntiCheat('eye_away_termination', `reading_${eyeReadWarnings}_times`);
                         endSessionWithMessage('Interview ended — repeated off-screen reading detected.');
                     }
 
@@ -1700,10 +1700,11 @@
         }
     });
 
-    // 6. Screen share detection
+    // 6. Screen share detection + Minimize prevention
     async function setupScreenShareDetection() {
         if (!navigator.mediaDevices) return;
 
+        // Intercept getDisplayMedia
         const orig = navigator.mediaDevices.getDisplayMedia?.bind(navigator.mediaDevices);
         if (orig) {
             navigator.mediaDevices.getDisplayMedia = async (...args) => {
@@ -1718,6 +1719,42 @@
                 return stream;
             };
         }
+
+        // Periodic check: detect if window is not focused or minimized
+        // When minimized: pause audio, show "come back" message when restored
+        let minimizedAt = null;
+        setInterval(() => {
+            if (!sessionOn || interviewEnded) return;
+
+            // Check if window lost focus / minimized
+            if (document.hidden || document.visibilityState === 'hidden') {
+                if (!minimizedAt) {
+                    minimizedAt = Date.now();
+                    // Pause any playing audio
+                    if (currentAudio) {
+                        try { currentAudio.pause(); } catch(e) {}
+                    }
+                    if ('speechSynthesis' in window) {
+                        speechSynthesis.pause();
+                    }
+                    console.log('[Anti-cheat] Window minimized/hidden — audio paused');
+                }
+            } else {
+                if (minimizedAt) {
+                    const duration = ((Date.now() - minimizedAt) / 1000).toFixed(1);
+                    minimizedAt = null;
+                    // Resume audio
+                    if (currentAudio && currentAudio.paused) {
+                        try { currentAudio.play(); } catch(e) {}
+                    }
+                    if ('speechSynthesis' in window && speechSynthesis.paused) {
+                        speechSynthesis.resume();
+                    }
+                    sendAntiCheat('window_minimize', `hidden_for:${duration}s`);
+                    console.log(`[Anti-cheat] Window restored after ${duration}s`);
+                }
+            }
+        }, 1000);
     }
     setupScreenShareDetection();
 

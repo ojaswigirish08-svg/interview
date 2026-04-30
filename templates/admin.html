@@ -794,7 +794,7 @@ function renderAcDetail(d) {
 
   // Anti-cheat events
   const ac_events = d.anticheat_log || [];
-  const ac_types  = ['tab_switch','paste_event','dom_overlay','screen_share','canary_triggered','head_turned','eye_reading','eye_scanning','ai_answer_overlay','ai_extension_detected'];
+  const ac_types  = ['tab_switch','paste_event','dom_overlay','screen_share','canary_triggered','head_turned','eye_away','window_minimize','ai_answer_overlay','ai_extension_detected'];
   const eventsHtml = ac_types.map(t => {
     const count = ac_events.filter(e => e.event_type === t).length;
     const fired = count > 0;
