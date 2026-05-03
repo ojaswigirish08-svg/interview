@@ -169,9 +169,10 @@
         <div class="ctrl-row">
             <span class="ctrl-label">Mode</span>
             <select id="mode-select">
-                <option value="with_trap">With trap (question + hidden audio)</option>
-                <option value="without_trap">Without trap (question only)</option>
-                <option value="trap_first">Trap first, then question</option>
+                <option value="with_trap">With trap (question then trap queued)</option>
+                <option value="trap_first">Trap first, then question (no gap)</option>
+                <option value="combined">Combined (trap + question in one sentence)</option>
+                <option value="without_trap">Without trap (question only — control test)</option>
             </select>
         </div>
 
@@ -332,33 +333,67 @@ async function nextQuestion() {
     addLog(`Q${currentQ+1}: "${q.substring(0,60)}..."`, 'speak-log');
 
     if (s.mode === 'with_trap') {
-        // 1. Speak question at normal volume
-        setStatus('speaking', `Speaking question ${currentQ+1}...`);
-        await speakText(q, s.qVolume, s.speed);
+        // Speak question normally
+        setStatus('speaking', `Speaking Q${currentQ+1} + trap in ${s.delay}ms...`);
 
-        // 2. After delay, play hidden trap at low volume
-        addLog(`Waiting ${s.delay}ms before trap...`, 'trap-log');
-        await new Promise(r => setTimeout(r, s.delay));
+        // Start question
+        const questionDone = speakText(q, s.qVolume, s.speed);
 
-        setStatus('trap', `Playing hidden trap (${(s.tVolume*100).toFixed(0)}% volume)...`);
-        addLog(`TRAP: "${s.trapPhrase}" at ${(s.tVolume*100).toFixed(0)}% vol, ${s.tSpeed}x speed`, 'trap-log');
-        await speakTrap(s.trapPhrase, s.tVolume, s.tSpeed);
+        // After delay, queue the trap (speechSynthesis will play it right after question ends,
+        // but we schedule it to start within 1 second using a tight delay)
+        setTimeout(() => {
+            // Cancel current speech and immediately speak trap + question together
+            // OR: just queue trap right away so it overlaps at end of question
+            addLog(`TRAP queued: "${s.trapPhrase}" at ${(s.tVolume*100).toFixed(0)}% vol`, 'trap-log');
+            setStatus('trap', `Trap playing...`);
+            const utt = new SpeechSynthesisUtterance(s.trapPhrase);
+            utt.volume = s.tVolume;
+            utt.rate = s.tSpeed;
+            speechSynthesis.speak(utt);
+        }, s.delay);
+
+        await questionDone;
+        // Wait for trap to finish too
+        await new Promise(r => setTimeout(r, 2000));
 
     } else if (s.mode === 'trap_first') {
-        // 1. Play trap first (hidden)
-        setStatus('trap', 'Playing hidden trap first...');
+        // Play trap immediately, then question right after (within 1 second)
+        setStatus('trap', 'Trap first...');
         addLog(`TRAP FIRST: "${s.trapPhrase}" at ${(s.tVolume*100).toFixed(0)}% vol`, 'trap-log');
-        await speakTrap(s.trapPhrase, s.tVolume, s.tSpeed);
 
-        await new Promise(r => setTimeout(r, 200));
+        // Speak trap
+        const trapUtt = new SpeechSynthesisUtterance(s.trapPhrase);
+        trapUtt.volume = s.tVolume;
+        trapUtt.rate = s.tSpeed;
+        speechSynthesis.speak(trapUtt);
 
-        // 2. Then speak question normally
-        setStatus('speaking', `Speaking question ${currentQ+1}...`);
-        await speakText(q, s.qVolume, s.speed);
+        // Queue question immediately after (no gap)
+        const qUtt = new SpeechSynthesisUtterance(q);
+        qUtt.volume = s.qVolume;
+        qUtt.rate = s.speed;
+        speechSynthesis.speak(qUtt);
+
+        setStatus('speaking', `Speaking Q${currentQ+1}...`);
+        await new Promise(resolve => { qUtt.onend = resolve; qUtt.onerror = resolve; });
+
+    } else if (s.mode === 'combined') {
+        // Combine trap + question into ONE utterance (no gap at all)
+        setStatus('speaking', `Speaking Q${currentQ+1} with embedded trap...`);
+        const combined = s.trapPhrase + '. ' + q;
+        addLog(`COMBINED: trap + question in single utterance`, 'trap-log');
+
+        const utt = new SpeechSynthesisUtterance(combined);
+        utt.volume = s.qVolume; // Normal volume — trap is part of the sentence
+        utt.rate = s.speed;
+        await new Promise(resolve => {
+            utt.onend = resolve;
+            utt.onerror = resolve;
+            speechSynthesis.speak(utt);
+        });
 
     } else {
         // No trap — question only
-        setStatus('speaking', `Speaking question ${currentQ+1}...`);
+        setStatus('speaking', `Speaking Q${currentQ+1}...`);
         await speakText(q, s.qVolume, s.speed);
     }
 
