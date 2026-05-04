@@ -16,6 +16,25 @@ import os, re, json, time, uuid, base64, tempfile, statistics, hashlib, secrets,
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dotenv import load_dotenv
+
+# New modular imports
+from agent import (
+    generate_question as agent_generate_question,
+    generate_greeting as agent_generate_greeting,
+    generate_warmup_question as agent_generate_warmup_question,
+    process_evaluation as agent_process_evaluation,
+    update_candidate_profile,
+    compute_trajectory, get_trajectory_interpretation,
+    strip_initials, get_agent_stats,
+)
+from strategy_engine import (
+    strategy_decide, strategy_update, strategy_coverage_for_report,
+    get_or_create_engine,
+)
+from evaluation_validator import (
+    validate_evaluation, should_defer_report, get_deferred_summary,
+)
+from repetition_guard import get_repetition_stats
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Depends, Request, Response, status
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -871,7 +890,10 @@ def record_contradiction_result(session, topic, angle, eval_data, turn):
     return False
 
 # ════════════════════════════════════════════════════════════
-# QUESTION TYPE DECISION ENGINE
+# ════════════════════════════════════════════════════════════
+# INTERVIEW ENGINE — delegates to agent.py, strategy_engine.py,
+# evaluation_validator.py, repetition_guard.py
+# Old functions replaced with wrappers to new modules.
 # ════════════════════════════════════════════════════════════
 def decide_question_type(session):
     phase = session["phase"]
@@ -1126,71 +1148,13 @@ def evaluate_answer_llm(session, question, answer, difficulty, question_type):
 
 
 # ════════════════════════════════════════════════════════════
-# QUESTION GENERATOR
+# QUESTION GENERATOR — delegates to agent.py
+# Uses strategy_engine for decisions, repetition_guard for dedup,
+# evaluation_validator for answer validation.
 # ════════════════════════════════════════════════════════════
 def generate_question(session, candidate_answer=None):
-    import random
-    q_type, extra = decide_question_type(session)
-    resume        = session.get("resume",{})
-    sid           = session.get("id","unknown")
-    all_skills    = resume.get("vlsi_skills",[]) or resume.get("tools",[]) + DOMAIN_TOPICS.get(resume.get("domain",""),[])
-    skills_covered= session.get("skills_covered_in_interview",[])
-    skip_topic    = session.get("skip_topic")
-    if skip_topic: skills_covered=skills_covered+[skip_topic]; session["skip_topic"]=None
-    uncovered     = [s for s in all_skills if s not in skills_covered]
-    current_skill = random.choice(uncovered) if uncovered else (random.choice(all_skills) if all_skills else None)
-    sys_prompt    = build_system_prompt(session, q_type, extra)
-    messages      = [{"role":"system","content":sys_prompt}]
-    history       = session.get("history",[])
-    for i, h in enumerate(history):
-        messages.append({"role":"assistant","content":h["question"]})
-        if h.get("answer") and i >= len(history)-5:
-            messages.append({"role":"user","content":h["answer"]})
-    if candidate_answer: messages.append({"role":"user","content":candidate_answer})
-    else: messages.append({"role":"user","content":"[START INTERVIEW]"})
-    prev_questions = [h["question"] for h in history if h.get("question")]
-    prev_qs_text   = "\n".join(f"- {q}" for q in prev_questions) if prev_questions else "None"
-    skill_instruction = ""
-    if current_skill: skill_instruction+=f"\n\nFOCUS SKILL: {current_skill}\nAlready covered: {', '.join(skills_covered) or 'None'}"
-    skill_instruction+=f"\n\nPREVIOUSLY ASKED (DO NOT repeat):\n{prev_qs_text}"
-    hint_instruction=""
-    last_entry=history[-1] if history else None
-    if last_entry and last_entry.get("evaluation"):
-        eval_data=last_entry["evaluation"]
-        missing=eval_data.get("missing_points",[])
-        if missing and eval_data.get("accuracy")=="partial":
-            hint_instruction=f"\n\nPREVIOUS ANSWER WAS PARTIAL. Missing: {', '.join(missing)}. Give a hint or follow-up."
-    messages[0]={"role":"system","content":sys_prompt+skill_instruction+hint_instruction}
-
-    from concurrent.futures import ThreadPoolExecutor
-    evaluation=None; result=None
-    def _do_eval():
-        le=session["history"][-1]
-        return evaluate_answer_llm(session,le.get("question",""),candidate_answer,le.get("difficulty","basic"),le.get("question_type",""))
-    def _do_qgen():
-        return call_llm_json(messages, temperature=0.65, max_tokens=400, _session_id=sid, _step="LLM_question")
-
-    t0=time.time()
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures={}
-        if candidate_answer and session.get("history"): futures["eval"]=executor.submit(_do_eval)
-        futures["qgen"]=executor.submit(_do_qgen)
-        for name,future in futures.items():
-            try:
-                if name=="eval":   evaluation=future.result()
-                elif name=="qgen": result=future.result()
-            except Exception as e: print(f"[Parallel] {name} failed: {e}")
-    print(f"[Timing] Parallel (eval+qgen): {time.time()-t0:.2f}s | Type: {q_type} | Skill: {current_skill}")
-
-    if not result or "question" not in result:
-        fallback_topic = current_skill or DOMAIN_TOPICS.get(session["resume"]["domain"],["your domain"])[0]
-        return {"question":f"Can you explain {fallback_topic} in your own words?","question_type":q_type,"topic":fallback_topic,"difficulty":DIFFICULTY_LABELS[session["difficulty_level"]],"hint_given":False,"hint_text":None,"evaluation":evaluation,"current_skill":current_skill}
-
-    if current_skill and current_skill not in skills_covered:
-        session.setdefault("skills_covered_in_interview",[]).append(current_skill)
-    result["question_type"]=q_type; result["current_skill"]=current_skill
-    result["_extra"]=extra; result["evaluation"]=evaluation
-    return result
+    """Delegates to agent.py — strategy engine + repetition guard + evaluation validator."""
+    return agent_generate_question(session, candidate_answer)
 
 
 # ════════════════════════════════════════════════════════════
@@ -1332,67 +1296,17 @@ def save_candidate_history(session):
     )
     print(f"[History] Saved for {candidate_key}: score={overall_score}, weak={weak}, strong={strong}")
 
-def strip_initials(name):
-    parts=name.split()
-    actual=[p for p in parts if not re.match(r'^[A-Z]\.$',p)]
-    return " ".join(actual) if actual else name
+
+# These functions now delegate to agent.py (new modular architecture)
+# strip_initials imported from agent.py at top of file
 
 def generate_greeting(session):
-    r=session.get("resume",{})
-    candidate_name=strip_initials(r.get("candidate_name","Candidate"))
-    if session.get("is_returning") and session.get("previous_sessions"):
-        last = session["previous_sessions"][-1]
-        weak = ", ".join(last.get("weak_topics", [])[:3]) or "some areas"
-        return {"question":f"Welcome back, {candidate_name}! Great to see you practicing again. Last time you did well but had some room to grow in {weak}. Let's see how you've improved. Please start by telling me what you've been studying or working on since then.","question_type":"greeting","topic":"greeting","difficulty":"basic"}
-    return {"question":f"Hi {candidate_name}! Welcome to the interview. Before we begin, please introduce yourself — your background, experience, and what you've been working on recently. After that, we'll start with a few warm-up questions and then move into the technical round.","question_type":"greeting","topic":"greeting","difficulty":"basic"}
+    return agent_generate_greeting(session)
 
 def generate_warmup_question(session, candidate_answer=None):
-    import random
-    resume=session.get("resume",{}); sid=session.get("id","unknown")
-    skills=resume.get("skills",[])+resume.get("tools",[])
-    candidate_name=strip_initials(resume.get("candidate_name","Candidate"))
-    warmup_skills_asked=session.get("warmup_skills_asked",[])
-    remaining=[s for s in skills if s not in warmup_skills_asked] or skills
-    random.shuffle(remaining)
-    skills_text=", ".join(skills) if skills else "VLSI concepts"
-    prev_questions=[h["question"] for h in session.get("history",[]) if h.get("question")]
-    prev_qs_text="\n".join(f"- {q}" for q in prev_questions) if prev_questions else "None"
-    prompt=f"""You are the Warmup Agent. Ask simple questions based on user skills only.
-Candidate Name: {candidate_name}
-User Skills: {skills_text}
-Previously Asked (DO NOT repeat): {prev_qs_text}
-Ask a simple question about one of their skills. No complex scenarios. No emojis.
-Return ONLY this JSON:
-{{"question": "your simple question","skill_asked": "skill name from the list"}}"""
-    result=call_cerebras_json([{"role":"user","content":prompt}], temperature=0.8, max_tokens=300,
-                              _session_id=sid, _step="resume_parsing")
-    if not result or "question" not in result:
-        import random
-        skill=random.choice(remaining) if remaining else (skills[0] if skills else "VLSI")
-        return {"question":f"Can you tell me about {skill}?","question_type":"warmup","skill_asked":skill}
-    if result.get("skill_asked"):
-        session.setdefault("warmup_skills_asked",[]).append(result["skill_asked"])
-    result["question_type"]="warmup"
-    return result
+    return agent_generate_warmup_question(session, candidate_answer)
 
-# ════════════════════════════════════════════════════════════
-# TRAJECTORY
-# ════════════════════════════════════════════════════════════
-def compute_trajectory(scores):
-    if len(scores)<4: return "insufficient_data"
-    third=max(1,len(scores)//3)
-    first=sum(scores[:third])/third
-    last_chunk=scores[2*third:] or scores[-1:]
-    last=sum(last_chunk)/len(last_chunk)
-    variance=max(scores)-min(scores)
-    if variance>4: return "spiky"
-    if last>first+1.5: return "rising"
-    if first>last+1.5: return "falling"
-    if first>=7 and last>=7: return "flat_strong"
-    return "flat_weak"
-
-def get_trajectory_interpretation(t):
-    return {"rising":"Started nervous, improved significantly.","falling":"Started strong, performance dropped.","spiky":"Inconsistent — deep on known topics, suspicious on others.","flat_strong":"Consistently strong throughout.","flat_weak":"Consistently struggled — needs more preparation.","insufficient_data":"Too few answers to determine pattern."}.get(t,"Pattern not determined.")
+# compute_trajectory and get_trajectory_interpretation imported from agent.py
 
 
 # ════════════════════════════════════════════════════════════
