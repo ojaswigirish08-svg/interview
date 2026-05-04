@@ -796,12 +796,23 @@ function renderAcDetail(d) {
   const ac_events = d.anticheat_log || [];
   const ac_types  = ['tab_switch','paste_event','dom_overlay','screen_share','canary_triggered','head_turned','eye_away','split_screen','keyboard_activity','ai_answer_overlay','ai_extension_detected'];
   const eventsHtml = ac_types.map(t => {
-    const count = ac_events.filter(e => e.event_type === t).length;
+    const matching = ac_events.filter(e => e.event_type === t);
+    const count = matching.length;
     const fired = count > 0;
+    // Build detail string from metadata
+    let detail = count > 0 ? count+' event'+(count>1?'s':'') : 'none';
+    if (fired && matching.length > 0) {
+      const details = matching.map(e => {
+        const meta = e.metadata || '';
+        const q = e.turn || '?';
+        return `Q${q}${meta ? ': '+meta : ''}`;
+      });
+      detail = details.join(' | ');
+    }
     return `<div class="signal-row ${fired?'fired':'ok'}">
       <div class="signal-icon" style="background:${fired?'#DC2626':'#16A34A'};color:#fff">${fired?'!':'✓'}</div>
       <span class="signal-label">${t.replace(/_/g,' ')}</span>
-      <span class="signal-count" style="color:${fired?'var(--red)':'var(--t4)'}">${count > 0 ? count+' event'+(count>1?'s':'') : 'none'}</span>
+      <span class="signal-count mono" style="color:${fired?'var(--red)':'var(--t4)'};font-size:11px">${detail}</span>
     </div>`;
   }).join('');
 
