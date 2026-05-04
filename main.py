@@ -1246,7 +1246,7 @@ def synthesize_speech_sarvam(text):
             "model": SARVAM_MODEL,
             "speaker": SARVAM_VOICE,
             "target_language_code": "en-IN",
-            "pace": 1.2,
+            "pace": 1.0,
             "speech_sample_rate": 24000,
         },
         timeout=15,
