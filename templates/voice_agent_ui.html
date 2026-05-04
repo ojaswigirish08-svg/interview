@@ -1687,18 +1687,42 @@
     });
 
     // 5. Keyboard shortcuts detection (Ctrl+C, Ctrl+V, Ctrl+Tab, Alt+Tab)
+    // Track ALL keyboard activity during interview (voice-only — no typing expected)
+    let keyPressCount = 0;
+    let keyPressReported = false;
     document.addEventListener('keydown', (e) => {
         if (!sessionOn || interviewEnded) return;
 
+        // Track any key press during answering phase — suspicious in voice-only interview
+        if (isRecording || orbState === 'listening') {
+            keyPressCount++;
+            // Report after 5 key presses (not every single key — reduces noise)
+            if (keyPressCount >= 5 && !keyPressReported) {
+                keyPressReported = true;
+                sendAntiCheat('keyboard_activity', `keys:${keyPressCount}`);
+                console.log(`[Anti-cheat] Keyboard activity during answer: ${keyPressCount} keys`);
+            }
+            // Report again at every 10 key threshold
+            if (keyPressCount % 10 === 0) {
+                sendAntiCheat('keyboard_activity', `keys:${keyPressCount}`);
+            }
+        }
+
+        // Log specific suspicious shortcuts
         if (e.ctrlKey || e.metaKey) {
             if (e.key === 'c') sendAntiCheat('shortcut_copy');
             if (e.key === 'v') sendAntiCheat('shortcut_paste');
             if (e.key === 'Tab') sendAntiCheat('shortcut_ctrl_tab');
         }
-        if (e.altKey && e.key === 'Tab') {
-            sendAntiCheat('shortcut_alt_tab');
-        }
+        if (e.altKey && e.key === 'Tab') sendAntiCheat('shortcut_alt_tab');
     });
+
+    // Reset key count when new question starts (AI speaking)
+    const _origSetOrb = setOrb;
+    setOrb = function(s) {
+        if (s === 'speaking') { keyPressCount = 0; keyPressReported = false; }
+        _origSetOrb(s);
+    };
 
     // 6. Screen share detection + Minimize prevention
 
