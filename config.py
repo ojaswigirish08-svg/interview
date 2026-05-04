@@ -94,8 +94,6 @@ SAPLING_API_KEY = os.getenv("SAPLING_API_KEY", "")
 if SAPLING_API_KEY:
     print("Sapling AI content detector ready.")
 
-COPYLEAKS_API_KEY = os.getenv("COPYLEAKS_API_KEY", "")
-COPYLEAKS_EMAIL = os.getenv("COPYLEAKS_EMAIL", "")
 
 # ── Interview constants ───────────────────────────────────────────────────────
 DIFFICULTY_LABELS = ["foundational", "basic", "intermediate", "advanced", "expert"]

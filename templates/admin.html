@@ -845,7 +845,6 @@ function renderAcDetail(d) {
     // AI detection display
     const aiDet = h.ai_detection || {};
     const sapScore = aiDet.sapling ? (aiDet.sapling.score * 100).toFixed(0) + '%' : '—';
-    const copScore = aiDet.copyleaks ? (aiDet.copyleaks.score * 100).toFixed(0) + '%' : '—';
     const aiFlag = aiDet.is_ai;
     const aiColor = aiFlag ? 'var(--red)' : aiDet.checked ? 'var(--green)' : 'var(--t4)';
     const aiText = aiFlag ? 'AI' : aiDet.checked ? 'Human' : '—';
@@ -858,7 +857,7 @@ function renderAcDetail(d) {
       <td style="font-size:10px;color:${bflags.length?'var(--red)':'var(--t4)'}">${bflags.length ? bflags.slice(0,2).map(f=>f.replace(/_/g,' ')).join(', ') : '—'}</td>
       <td style="font-size:10px;font-family:var(--mono)">
         <span style="color:${aiColor};font-weight:${aiFlag?'700':'400'}">${aiText}</span>
-        ${aiDet.checked ? `<br><span style="font-size:9px;color:var(--t4)">S:${sapScore} C:${copScore}</span>` : ''}
+        ${aiDet.checked ? `<br><span style="font-size:9px;color:var(--t4)">Sapling: ${sapScore}</span>` : ''}
       </td>
     </tr>`;
   }).join('');
