@@ -302,7 +302,10 @@ if ELEVENLABS_API_KEY:
 
 LMNT_API_KEY  = os.getenv("LMNT_API_KEY", "")
 LMNT_VOICE_ID = os.getenv("LMNT_VOICE_ID", "")
-TTS_ENABLED   = os.getenv("TTS_ENABLED", "true").lower() == "true"
+TTS_ENABLED          = os.getenv("TTS_ENABLED", "true").lower() == "true"
+HEAD_TURN_ENABLED    = os.getenv("HEAD_TURN_ENABLED", "true").lower() == "true"
+EYE_AWAY_ENABLED     = os.getenv("EYE_AWAY_ENABLED", "true").lower() == "true"
+FACE_DETECT_ENABLED  = os.getenv("FACE_DETECT_ENABLED", "true").lower() == "true"
 SAPLING_API_KEY = os.getenv("SAPLING_API_KEY", "")
 if SAPLING_API_KEY:
     print("Sapling AI content detector ready.")
@@ -1184,9 +1187,12 @@ def _detect_sapling(text):
 def _detect_copyleaks(text):
     """Copyleaks AI detection."""
     token = _get_copyleaks_token()
-    if not token: return None
+    if not token:
+        print("[Copyleaks] No auth token — skipping detection")
+        return None
     try:
         scan_id = f"vlsi-{uuid.uuid4().hex[:8]}"
+        print(f"[Copyleaks] Sending scan {scan_id} ({len(text)} chars)...")
         resp = http_requests.post(
             f"https://api.copyleaks.com/v2/writer-detector/{scan_id}/check",
             headers={
@@ -1196,13 +1202,26 @@ def _detect_copyleaks(text):
             json={"text": text},
             timeout=10
         )
+        print(f"[Copyleaks] Response: {resp.status_code}")
         if resp.status_code == 200:
             data = resp.json()
-            # Copyleaks returns summary with AI probability
-            ai_score = data.get("summary", {}).get("ai", 0) / 100.0  # Convert 0-100 to 0-1
+            print(f"[Copyleaks] Response data: {json.dumps(data)[:200]}")
+            # Try multiple response formats
+            ai_score = 0.0
+            if "summary" in data and "ai" in data["summary"]:
+                ai_score = data["summary"]["ai"] / 100.0
+            elif "results" in data:
+                results = data["results"]
+                if isinstance(results, list) and results:
+                    ai_score = results[0].get("ai", {}).get("score", 0) / 100.0
+                elif isinstance(results, dict):
+                    ai_score = results.get("score", {}).get("ai", 0) / 100.0
+            elif "score" in data:
+                ai_score = data["score"] / 100.0 if data["score"] > 1 else data["score"]
+            print(f"[Copyleaks] AI score: {ai_score:.3f}")
             return {"source": "copyleaks", "ai_score": round(ai_score, 3)}
         else:
-            print(f"[Copyleaks] API error: {resp.status_code} {resp.text[:100]}")
+            print(f"[Copyleaks] API error: {resp.status_code} {resp.text[:200]}")
             return None
     except Exception as e:
         print(f"[Copyleaks] Failed: {e}")
@@ -1934,6 +1953,14 @@ async def toggle_tts(data: dict):
 @app.get("/api/tts-status")
 async def tts_status():
     return JSONResponse({"tts_enabled": TTS_ENABLED})
+
+@app.get("/api/anticheat-settings")
+async def anticheat_settings():
+    return JSONResponse({
+        "head_turn_enabled": HEAD_TURN_ENABLED,
+        "eye_away_enabled": EYE_AWAY_ENABLED,
+        "face_detect_enabled": FACE_DETECT_ENABLED,
+    })
 
 @app.post("/api/end-session")
 async def end_session(data: dict):

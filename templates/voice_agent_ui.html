@@ -496,6 +496,19 @@
 
 <script>
     let sessionOn = false, secs = 0, qCount = 0, ticker = null, orbState = 'idle';
+
+    // Anti-cheat feature toggles (loaded from server .env settings)
+    let headTurnEnabled = true;
+    let eyeAwayEnabled = true;
+    let faceDetectEnabled = true;
+
+    // Load settings from server
+    fetch('/api/anticheat-settings').then(r => r.json()).then(data => {
+        headTurnEnabled = data.head_turn_enabled !== false;
+        eyeAwayEnabled = data.eye_away_enabled !== false;
+        faceDetectEnabled = data.face_detect_enabled !== false;
+        console.log(`[Settings] head_turn=${headTurnEnabled} eye_away=${eyeAwayEnabled} face_detect=${faceDetectEnabled}`);
+    }).catch(() => {});
     let interviewEnded = false;  // Flag to completely stop interview
 
     function setOrb(s) { orbState = s; document.getElementById('orb').className = 'orb ' + s; }
@@ -849,8 +862,9 @@
                 faceStatus.style.color = irisOk ? '#4f4' : '#ff0';
             }
 
-            // --- Face presence check ---
-            if (present) {
+            // --- Face presence check (can be disabled via .env FACE_DETECT_ENABLED=false) ---
+            if (!faceDetectEnabled) { noFaceCount = 0; }
+            else if (present) {
                 noFaceCount = 0;
             } else {
                 noFaceCount++;
@@ -871,8 +885,8 @@
                 }
             }
 
-            // --- Head turn check ---
-            if (present && headTurned) {
+            // --- Head turn check (can be disabled via .env HEAD_TURN_ENABLED=false) ---
+            if (headTurnEnabled && present && headTurned) {
                 headTurnCount++;
                 console.log(`[HeadPose] Head turned ${direction} (${headTurnCount}/${HEAD_TURN_LIMIT})`);
 
@@ -901,8 +915,8 @@
                 headTurnCount = 0;
             }
 
-            // --- Eye reading check (only when candidate is answering, not during AI speaking) ---
-            if (present && !headTurned && eyeReading && isAnswering) {
+            // --- Eye away check (can be disabled via .env EYE_AWAY_ENABLED=false) ---
+            if (eyeAwayEnabled && present && !headTurned && eyeReading && isAnswering) {
                 eyeReadCount++;
                 console.log(`[EyeGaze] Eyes reading ${eyeDirection} (${eyeReadCount}/${EYE_READ_LIMIT})`);
 
