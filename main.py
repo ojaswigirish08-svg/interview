@@ -819,8 +819,14 @@ def compute_suspicion_score(session, scored_history):
     ai_gen_turns = [h for h in scored_history if "ai_generated_answer" in h.get("behavioral_flags",[])]
     if ai_gen_turns:
         suspicion += len(ai_gen_turns) * 20
-        ai_scores = [h.get("ai_detection",{}).get("ai_score",0) for h in ai_gen_turns]
-        flags.append(f"AI-generated answers detected in {len(ai_gen_turns)} response(s) (avg AI score: {sum(ai_scores)/len(ai_scores):.0%})")
+        ai_scores = []
+        for h in ai_gen_turns:
+            det = h.get("ai_detection", {})
+            s = (det.get("sapling") or {}).get("score", 0)
+            c = (det.get("copyleaks") or {}).get("score", 0)
+            ai_scores.append(max(s, c))
+        avg_ai = sum(ai_scores)/len(ai_scores) if ai_scores else 0
+        flags.append(f"AI-generated answers detected in {len(ai_gen_turns)} response(s) (avg AI score: {avg_ai:.0%})")
     clean_turns = [h for h in scored_history if "suspiciously_clean_speech" in h.get("behavioral_flags",[])]
     if len(clean_turns)>=3: suspicion+=len(clean_turns)*8; flags.append(f"Filler words vanished in {len(clean_turns)} answers")
     pronoun_turns = [h for h in scored_history if "personal_pronouns_vanished" in h.get("behavioral_flags",[])]
@@ -1708,11 +1714,15 @@ async def submit_answer(request: Request, data: AnswerSubmit):
             ai_result = detect_ai_content(data.answer, session_id=sid)
             current_entry["ai_detection"] = ai_result
             if ai_result.get("is_ai"):
+                # Get the highest score from whichever detector flagged it
+                s_score = (ai_result.get("sapling") or {}).get("score", 0)
+                c_score = (ai_result.get("copyleaks") or {}).get("score", 0)
+                max_score = max(s_score, c_score)
                 current_entry["behavioral_flags"].append("ai_generated_answer")
                 session["running_suspicion"] = session.get("running_suspicion", 0) + 15
                 record_notable(session, session["turn"]-1, current_entry.get("question",""), data.answer,
-                    "concern_flag", f"AI-generated answer detected at question {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
-                print(f"[AI Detect] WARNING: AI-generated answer at turn {session['turn']-1} (score: {ai_result['ai_score']:.0%})")
+                    "concern_flag", f"AI-generated answer detected at question {session['turn']-1} (sapling: {s_score:.0%}, copyleaks: {c_score:.0%})")
+                print(f"[AI Detect] WARNING: AI-generated answer at question {session['turn']-1} (sapling: {s_score:.0%}, copyleaks: {c_score:.0%})")
 
     if session["phase"]=="greeting":
         if session.get("skip_warmup"):

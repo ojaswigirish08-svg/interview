@@ -842,17 +842,73 @@ function renderAcDetail(d) {
     const qd = (h.quadrant||'').replace(/_/g,' ');
     const qdColor = h.quadrant === 'genuine_expert' ? 'chip-ok' : h.quadrant === 'dangerous_fake' ? 'chip-red' : h.quadrant === 'genuine_nervous' ? 'chip-blue' : 'chip-gray';
     const bflags = (h.behavioral_flags||[]);
+    // AI detection display
+    const aiDet = h.ai_detection || {};
+    const sapScore = aiDet.sapling ? (aiDet.sapling.score * 100).toFixed(0) + '%' : '—';
+    const copScore = aiDet.copyleaks ? (aiDet.copyleaks.score * 100).toFixed(0) + '%' : '—';
+    const aiFlag = aiDet.is_ai;
+    const aiColor = aiFlag ? 'var(--red)' : aiDet.checked ? 'var(--green)' : 'var(--t4)';
+    const aiText = aiFlag ? 'AI' : aiDet.checked ? 'Human' : '—';
     return `<tr>
-      <td class="mono">T${h.turn}</td>
+      <td class="mono">Q${h.turn}</td>
       <td style="font-size:11px;color:var(--t3)">${escH(h.topic||'—')}</td>
       <td><span class="chip chip-gray" style="font-size:9px">${h.difficulty||'—'}</span></td>
       <td style="font-weight:500;color:${scColor(h.score||0)};font-family:var(--mono)">${h.score||'—'}/10</td>
       <td><span class="chip ${qdColor}" style="font-size:9px">${qd||'—'}</span></td>
       <td style="font-size:10px;color:${bflags.length?'var(--red)':'var(--t4)'}">${bflags.length ? bflags.slice(0,2).map(f=>f.replace(/_/g,' ')).join(', ') : '—'}</td>
+      <td style="font-size:10px;font-family:var(--mono)">
+        <span style="color:${aiColor};font-weight:${aiFlag?'700':'400'}">${aiText}</span>
+        ${aiDet.checked ? `<br><span style="font-size:9px;color:var(--t4)">S:${sapScore} C:${copScore}</span>` : ''}
+      </td>
     </tr>`;
   }).join('');
 
-  const notable = (d.notable_moments||[]).map(m => `<div style="padding:8px 11px;margin-bottom:6px;border-radius:8px;font-size:11px;line-height:1.55;background:${m.moment_type==='concern_flag'?'var(--rb)':'var(--gb)'};border:1px solid ${m.moment_type==='concern_flag'?'var(--rbd)':'var(--gbd)'}"><strong>T${m.turn}</strong> — ${escH(m.detail)}</div>`).join('') || '<div style="color:var(--t4);font-size:12px">No notable moments</div>';
+  // Combine notable moments + anti-cheat events into one timeline
+  const notableMoments = (d.notable_moments||[]).map(m => ({
+    turn: m.turn,
+    type: m.moment_type,
+    text: m.detail,
+    source: 'interview'
+  }));
+  const acMoments = ac_events.map(e => ({
+    turn: e.turn,
+    type: 'anticheat',
+    text: `${e.event_type.replace(/_/g,' ')}${e.metadata ? ' — ' + e.metadata : ''}`,
+    source: e.event_type
+  }));
+  const allMoments = [...notableMoments, ...acMoments].sort((a,b) => (a.turn||0) - (b.turn||0));
+
+  const acColors = {
+    tab_switch: {bg:'var(--rb)',bd:'var(--rbd)'},
+    paste_event: {bg:'var(--rb)',bd:'var(--rbd)'},
+    head_turned: {bg:'#FFF7ED',bd:'#FED7AA'},
+    eye_away: {bg:'#F5F3FF',bd:'#DDD6FE'},
+    split_screen: {bg:'#FFF7ED',bd:'#FED7AA'},
+    keyboard_activity: {bg:'#FFFBEB',bd:'#FDE68A'},
+    dom_overlay: {bg:'var(--rb)',bd:'var(--rbd)'},
+    ai_answer_overlay: {bg:'var(--rb)',bd:'var(--rbd)'},
+    ai_extension_detected: {bg:'var(--rb)',bd:'var(--rbd)'},
+    screen_share: {bg:'var(--rb)',bd:'var(--rbd)'},
+    canary_triggered: {bg:'var(--rb)',bd:'var(--rbd)'},
+  };
+
+  const notable = allMoments.map(m => {
+    let bg, bd, icon;
+    if (m.type === 'positive_signal') {
+      bg = 'var(--gb)'; bd = 'var(--gbd)'; icon = '&#10003;';
+    } else if (m.type === 'concern_flag') {
+      bg = 'var(--rb)'; bd = 'var(--rbd)'; icon = '&#9888;';
+    } else if (m.type === 'anticheat') {
+      const c = acColors[m.source] || {bg:'var(--rb)',bd:'var(--rbd)'};
+      bg = c.bg; bd = c.bd; icon = '&#128274;';
+    } else {
+      bg = 'var(--off)'; bd = 'var(--b)'; icon = '&#8226;';
+    }
+    return `<div style="padding:8px 11px;margin-bottom:6px;border-radius:8px;font-size:11px;line-height:1.55;background:${bg};border:1px solid ${bd};display:flex;align-items:flex-start;gap:8px">
+      <span style="flex-shrink:0;font-size:13px">${icon}</span>
+      <div><strong>Q${m.turn||'?'}</strong> — ${escH(m.text)}</div>
+    </div>`;
+  }).join('') || '<div style="color:var(--t4);font-size:12px">No notable moments</div>';
 
   // Observability summary for this session
   const obs = d.observability || {};
@@ -951,8 +1007,8 @@ function renderAcDetail(d) {
       <div class="sec-label" style="margin-bottom:10px">Question-by-question log</div>
       <div class="tbl-wrap" style="margin:0">
         <table>
-          <thead><tr><th>Turn</th><th>Topic</th><th>Difficulty</th><th>Score</th><th>Quadrant</th><th>Behavioral flags</th></tr></thead>
-          <tbody>${turnsHtml || '<tr><td colspan="6" class="empty-state">No technical turns yet</td></tr>'}</tbody>
+          <thead><tr><th>Q#</th><th>Topic</th><th>Difficulty</th><th>Score</th><th>Quadrant</th><th>Flags</th><th>AI Detect</th></tr></thead>
+          <tbody>${turnsHtml || '<tr><td colspan="7" class="empty-state">No technical questions yet</td></tr>'}</tbody>
         </table>
       </div>
     </div>
