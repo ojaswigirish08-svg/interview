@@ -300,6 +300,12 @@ if ELEVENLABS_API_KEY:
     elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
     print("ElevenLabs Scribe v2 ready (fallback STT).")
 
+SARVAM_API_KEY = os.getenv("SARVAM_API_KEY", "")
+SARVAM_VOICE   = os.getenv("SARVAM_VOICE", "ritu")
+SARVAM_MODEL   = os.getenv("SARVAM_MODEL", "bulbul:v3")
+if SARVAM_API_KEY:
+    print(f"Sarvam AI TTS ready (voice: {SARVAM_VOICE}, model: {SARVAM_MODEL}).")
+
 LMNT_API_KEY  = os.getenv("LMNT_API_KEY", "")
 LMNT_VOICE_ID = os.getenv("LMNT_VOICE_ID", "")
 TTS_ENABLED          = os.getenv("TTS_ENABLED", "true").lower() == "true"
@@ -1225,8 +1231,34 @@ def generate_warmup_question(session, candidate_answer=None):
 
 # ════════════════════════════════════════════════════════════
 # TTS — with observability tracking
-# Fallback chain: Mistral Voxtral → LMNT → Pocket TTS → Browser speechSynthesis
+# Fallback chain: Sarvam Bulbul V3 → Mistral Voxtral → LMNT → Pocket TTS → Browser
 # ════════════════════════════════════════════════════════════
+def synthesize_speech_sarvam(text):
+    """Primary TTS: Sarvam AI Bulbul V3 (Indian English voice)."""
+    resp = http_requests.post(
+        "https://api.sarvam.ai/text-to-speech",
+        headers={
+            "api-subscription-key": SARVAM_API_KEY,
+            "Content-Type": "application/json"
+        },
+        json={
+            "input": text[:2500],
+            "model": SARVAM_MODEL,
+            "voice": SARVAM_VOICE,
+            "language_code": "en-IN",
+            "pace": 1.2,
+            "enable_preprocessing": True,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    # Sarvam returns base64 audio in "audio" field
+    audio_b64 = data.get("audio", "")
+    if audio_b64:
+        return audio_b64
+    return base64.b64encode(resp.content).decode()
+
 def synthesize_speech_mistral(text):
     """Primary TTS: Mistral Voxtral with voice cloning."""
     resp = http_requests.post(
@@ -1270,7 +1302,7 @@ def synthesize_speech_polly(text):
     return base64.b64encode(resp["AudioStream"].read()).decode()
 
 def synthesize_speech(text: str, session_id: str = "unknown") -> str:
-    """TTS fallback chain: Mistral Voxtral → LMNT → Pocket TTS → empty (browser fallback)."""
+    """TTS fallback chain: Sarvam → Mistral → LMNT → Pocket TTS → empty (browser fallback)."""
     session = sessions.get(session_id)
     tts_on = TTS_ENABLED
     if session and "tts_enabled" in session:
@@ -1279,7 +1311,22 @@ def synthesize_speech(text: str, session_id: str = "unknown") -> str:
         return ""
     char_count = len(text)
 
-    # 1. Primary: Mistral Voxtral (voice cloning)
+    # 1. Primary: Sarvam AI Bulbul V3 (Indian English voice)
+    if SARVAM_API_KEY:
+        t0 = time.time()
+        try:
+            result = synthesize_speech_sarvam(text)
+            track_tts_call(session_id=session_id, model="Sarvam-BulbulV3",
+                           latency_ms=(time.time()-t0)*1000,
+                           char_count=char_count, status="success")
+            return result
+        except Exception as e:
+            track_tts_call(session_id=session_id, model="Sarvam-BulbulV3",
+                           latency_ms=(time.time()-t0)*1000,
+                           char_count=char_count, status="failure", error=str(e))
+            print(f"Sarvam TTS failed, falling back to Mistral: {e}")
+
+    # 2. Mistral Voxtral (voice cloning)
     if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
         t0 = time.time()
         try:
@@ -1294,7 +1341,7 @@ def synthesize_speech(text: str, session_id: str = "unknown") -> str:
                            char_count=char_count, status="failure", error=str(e))
             print(f"Mistral TTS failed, falling back to LMNT: {e}")
 
-    # 2. Fallback 1: LMNT (voice cloning)
+    # 3. LMNT (voice cloning)
     if LMNT_API_KEY and LMNT_VOICE_ID:
         t0 = time.time()
         try:
@@ -1309,7 +1356,7 @@ def synthesize_speech(text: str, session_id: str = "unknown") -> str:
                            char_count=char_count, status="failure", error=str(e), fallback=True)
             print(f"LMNT TTS failed, falling back to Pocket TTS: {e}")
 
-    # 3. Fallback 2: Pocket TTS (local, free)
+    # 4. Pocket TTS (local, free)
     if pocket_tts_model and pocket_tts_voice_state:
         t0 = time.time()
         try:
