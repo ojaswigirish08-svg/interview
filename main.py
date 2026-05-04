@@ -1242,18 +1242,22 @@ def synthesize_speech_sarvam(text):
             "Content-Type": "application/json"
         },
         json={
-            "input": text[:2500],
+            "text": text[:2500],
             "model": SARVAM_MODEL,
-            "voice": SARVAM_VOICE,
-            "language_code": "en-IN",
+            "speaker": SARVAM_VOICE,
+            "target_language_code": "en-IN",
             "pace": 1.2,
-            "enable_preprocessing": True,
+            "speech_sample_rate": 24000,
         },
         timeout=15,
     )
     resp.raise_for_status()
     data = resp.json()
-    # Sarvam returns base64 audio in "audio" field
+    # Sarvam returns base64 audio in "audios" array
+    audios = data.get("audios", [])
+    if audios:
+        return "".join(audios)
+    # Fallback: check "audio" field
     audio_b64 = data.get("audio", "")
     if audio_b64:
         return audio_b64
