@@ -1336,8 +1336,26 @@ def generate_warmup_question(session, candidate_answer=None):
 
 # ════════════════════════════════════════════════════════════
 # TTS — with observability tracking
+# Fallback chain: Mistral Voxtral → LMNT → Pocket TTS → Browser speechSynthesis
 # ════════════════════════════════════════════════════════════
+def synthesize_speech_mistral(text):
+    """Primary TTS: Mistral Voxtral with voice cloning."""
+    resp = http_requests.post(
+        "https://api.mistral.ai/v1/audio/speech",
+        headers={"Authorization":f"Bearer {MISTRAL_API_KEY}","Content-Type":"application/json"},
+        json={"model":"voxtral-mini-tts-2603","input":text[:1500],"ref_audio":MISTRAL_TTS_REF_AUDIO,"response_format":"mp3"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    content_type = resp.headers.get("Content-Type","")
+    if "json" in content_type:
+        data = resp.json()
+        audio_b64 = data.get("audio_data","")
+        if audio_b64: return audio_b64
+    return base64.b64encode(resp.content).decode()
+
 def synthesize_speech_lmnt(text):
+    """Fallback 1 TTS: LMNT with voice cloning."""
     resp = http_requests.post(
         "https://api.lmnt.com/v1/ai/speech",
         headers={"X-API-Key":LMNT_API_KEY,"Content-Type":"application/json"},
@@ -1351,6 +1369,7 @@ def synthesize_speech_lmnt(text):
     return base64.b64encode(resp.content).decode()
 
 def synthesize_speech_pocket(text):
+    """Fallback 2 TTS: Pocket TTS (local, free)."""
     audio=pocket_tts_model.generate_audio(pocket_tts_voice_state, text[:1500])
     import io
     wav_buffer=io.BytesIO()
@@ -1362,28 +1381,46 @@ def synthesize_speech_polly(text):
     return base64.b64encode(resp["AudioStream"].read()).decode()
 
 def synthesize_speech(text: str, session_id: str = "unknown") -> str:
-    """TTS with fallback chain: LMNT → Pocket TTS. Tracks every call."""
-    # Check global TTS toggle and per-session override
+    """TTS fallback chain: Mistral Voxtral → LMNT → Pocket TTS → empty (browser fallback)."""
     session = sessions.get(session_id)
     tts_on = TTS_ENABLED
     if session and "tts_enabled" in session:
         tts_on = session["tts_enabled"]
     if not tts_on:
-        return ""  # No audio — frontend will use browser speechSynthesis or show text only
+        return ""
     char_count = len(text)
+
+    # 1. Primary: Mistral Voxtral (voice cloning)
+    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
+        t0 = time.time()
+        try:
+            result = synthesize_speech_mistral(text)
+            track_tts_call(session_id=session_id, model="Mistral-Voxtral",
+                           latency_ms=(time.time()-t0)*1000,
+                           char_count=char_count, status="success")
+            return result
+        except Exception as e:
+            track_tts_call(session_id=session_id, model="Mistral-Voxtral",
+                           latency_ms=(time.time()-t0)*1000,
+                           char_count=char_count, status="failure", error=str(e))
+            print(f"Mistral TTS failed, falling back to LMNT: {e}")
+
+    # 2. Fallback 1: LMNT (voice cloning)
     if LMNT_API_KEY and LMNT_VOICE_ID:
         t0 = time.time()
         try:
             result = synthesize_speech_lmnt(text)
             track_tts_call(session_id=session_id, model="LMNT",
                            latency_ms=(time.time()-t0)*1000,
-                           char_count=char_count, status="success")
+                           char_count=char_count, status="success", fallback=True)
             return result
         except Exception as e:
             track_tts_call(session_id=session_id, model="LMNT",
                            latency_ms=(time.time()-t0)*1000,
-                           char_count=char_count, status="failure", error=str(e))
+                           char_count=char_count, status="failure", error=str(e), fallback=True)
             print(f"LMNT TTS failed, falling back to Pocket TTS: {e}")
+
+    # 3. Fallback 2: Pocket TTS (local, free)
     if pocket_tts_model and pocket_tts_voice_state:
         t0 = time.time()
         try:
