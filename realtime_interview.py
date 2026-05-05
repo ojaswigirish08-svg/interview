@@ -237,8 +237,8 @@ async def websocket_interview(ws: WebSocket):
 
     print(f"[Realtime] Session {session_id[:8]} started — {candidate_name} | {domain} | {level}")
 
-    # Connect to OpenAI Realtime API
-    openai_ws_url = "wss://api.openai.com/v1/realtime"
+    # Connect to OpenAI Realtime API (model must be in URL)
+    openai_ws_url = f"wss://api.openai.com/v1/realtime?model={REALTIME_MODEL}"
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "OpenAI-Beta": "realtime=v1"
@@ -250,7 +250,6 @@ async def websocket_interview(ws: WebSocket):
             session_config = {
                 "type": "session.update",
                 "session": {
-                    "model": REALTIME_MODEL,
                     "voice": VOICE,
                     "instructions": system_prompt,
                     "tools": TOOLS,
