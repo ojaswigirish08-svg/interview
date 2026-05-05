@@ -1320,9 +1320,11 @@ def synthesize_speech(text: str, session_id: str = "unknown") -> str:
         t0 = time.time()
         try:
             result = synthesize_speech_sarvam(text)
+            elapsed = time.time()-t0
             track_tts_call(session_id=session_id, model="Sarvam-BulbulV3",
-                           latency_ms=(time.time()-t0)*1000,
+                           latency_ms=elapsed*1000,
                            char_count=char_count, status="success")
+            print(f"[Timing] TTS (Sarvam): {elapsed:.2f}s | {char_count} chars")
             return result
         except Exception as e:
             track_tts_call(session_id=session_id, model="Sarvam-BulbulV3",
@@ -1885,18 +1887,48 @@ async def submit_answer(request: Request, data: AnswerSubmit):
 
     technical_turns=session["turn"]-session.get("warmup_turns",0)-1
     should_end=(technical_turns>=20 or session["phase"]=="ended" or struggling_end or off_topic_end or result.get("warmup_decision")=="end_not_ready")
-    audio=synthesize_speech(result["question"], session_id=sid)
+    # Don't generate TTS here — frontend will stream it via /api/stream-tts (faster startup)
+    audio = ""
     return JSONResponse({"question":result["question"],"question_type":result.get("question_type","interview"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"difficulty":result.get("difficulty",DIFFICULTY_LABELS[session["difficulty_level"]]),"should_end":should_end,"hint_given":result.get("hint_given",False),"hint_text":result.get("hint_text"),"warmup_decision":result.get("warmup_decision"),"warmup_performance":session.get("warmup_performance","pending")})
 
 @app.get("/api/stream-tts")
 async def stream_tts_endpoint(text: str, session_id: str = ""):
+    """Streaming TTS — generates audio and sends it immediately for faster playback start."""
     if not text: raise HTTPException(400,"No text provided")
+
+    # Try Sarvam first (returns full audio quickly)
+    if SARVAM_API_KEY:
+        try:
+            audio_b64 = synthesize_speech_sarvam(text)
+            audio_bytes = base64.b64decode(audio_b64)
+            return StreamingResponse(iter([audio_bytes]), media_type="audio/wav")
+        except Exception as e:
+            print(f"[Stream TTS] Sarvam failed: {e}")
+
+    # Try Mistral streaming
+    if MISTRAL_API_KEY and MISTRAL_TTS_REF_AUDIO:
+        return StreamingResponse(stream_tts(text), media_type="audio/mpeg", headers={"Transfer-Encoding":"chunked"})
+
+    # Try LMNT
+    if LMNT_API_KEY and LMNT_VOICE_ID:
+        try:
+            audio_b64 = synthesize_speech_lmnt(text)
+            audio_bytes = base64.b64decode(audio_b64)
+            return StreamingResponse(iter([audio_bytes]), media_type="audio/mpeg")
+        except Exception as e:
+            print(f"[Stream TTS] LMNT failed: {e}")
+
+    # Pocket TTS fallback
     if pocket_tts_model and pocket_tts_voice_state:
         try:
-            audio_b64=synthesize_speech_pocket(text); audio_bytes=base64.b64decode(audio_b64)
-            return StreamingResponse(iter([audio_bytes]),media_type="audio/wav",headers={"Content-Length":str(len(audio_bytes))})
-        except Exception as e: print(f"Pocket TTS failed in stream: {e}")
-    return StreamingResponse(stream_tts(text),media_type="audio/mpeg",headers={"Transfer-Encoding":"chunked"})
+            audio_b64 = synthesize_speech_pocket(text)
+            audio_bytes = base64.b64decode(audio_b64)
+            return StreamingResponse(iter([audio_bytes]), media_type="audio/wav")
+        except Exception as e:
+            print(f"[Stream TTS] Pocket failed: {e}")
+
+    # Nothing available
+    return JSONResponse({"error": "No TTS available"}, status_code=503)
 
 @app.post("/api/transcribe")
 @limiter.limit("30/minute")
