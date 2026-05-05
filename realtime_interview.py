@@ -250,44 +250,53 @@ async def websocket_interview(ws: WebSocket):
             session_config = {
                 "type": "session.update",
                 "session": {
+                    "modalities": ["text", "audio"],
                     "voice": VOICE,
                     "instructions": system_prompt,
                     "tools": TOOLS,
                     "tool_choice": "auto",
                     "input_audio_format": "pcm16",
                     "output_audio_format": "pcm16",
+                    "input_audio_transcription": {
+                        "model": "whisper-1"
+                    },
                     "turn_detection": {
                         "type": "server_vad",
-                        "threshold": 0.5,
-                        "prefix_padding_ms": 300,
-                        "silence_duration_ms": 1500
+                        "threshold": 0.6,
+                        "prefix_padding_ms": 500,
+                        "silence_duration_ms": 800
                     }
                 }
             }
             await openai_ws.send(json.dumps(session_config))
             print(f"[Realtime] OpenAI session configured")
 
+            # Wait for session.created confirmation before triggering greeting
+            await asyncio.sleep(0.5)
+
             # Send initial greeting trigger
             await openai_ws.send(json.dumps({
-                "type": "response.create",
-                "response": {
-                    "modalities": ["text", "audio"]
-                }
+                "type": "response.create"
             }))
 
             # Relay messages between browser and OpenAI
+            audio_chunks_sent = 0
             async def browser_to_openai():
                 """Forward audio from browser to OpenAI."""
+                nonlocal audio_chunks_sent
                 try:
                     while True:
                         data = await ws.receive()
                         if "bytes" in data:
-                            # Audio data from browser mic
+                            # Audio data from browser mic — forward to OpenAI
                             audio_b64 = base64.b64encode(data["bytes"]).decode()
                             await openai_ws.send(json.dumps({
                                 "type": "input_audio_buffer.append",
                                 "audio": audio_b64
                             }))
+                            audio_chunks_sent += 1
+                            if audio_chunks_sent % 50 == 0:
+                                print(f"[Realtime] Audio chunks sent to OpenAI: {audio_chunks_sent}")
                         elif "text" in data:
                             msg = json.loads(data["text"])
                             if msg.get("type") == "end":
@@ -355,11 +364,19 @@ async def websocket_interview(ws: WebSocket):
 
                         # Speech started — notify browser
                         elif event_type == "input_audio_buffer.speech_started":
+                            print(f"[Realtime] User speech STARTED (OpenAI detected voice)")
                             await ws.send_text(json.dumps({"type": "speech_started"}))
 
                         # Speech stopped
                         elif event_type == "input_audio_buffer.speech_stopped":
+                            print(f"[Realtime] User speech STOPPED (silence detected)")
                             await ws.send_text(json.dumps({"type": "speech_stopped"}))
+
+                        # Transcription of user's speech
+                        elif event_type == "conversation.item.input_audio_transcription.completed":
+                            transcript = event.get("transcript", "")
+                            print(f"[Realtime] User said: '{transcript[:80]}'")
+                            await ws.send_text(json.dumps({"type": "user_transcript", "text": transcript}))
 
                         # Response done
                         elif event_type == "response.done":
