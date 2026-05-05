@@ -25,7 +25,12 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 import uvicorn
-import websockets
+try:
+    import websockets
+    from websockets.asyncio.client import connect as ws_connect
+except ImportError:
+    import websockets
+    ws_connect = websockets.connect
 
 load_dotenv()
 
@@ -240,7 +245,7 @@ async def websocket_interview(ws: WebSocket):
     }
 
     try:
-        async with websockets.connect(openai_ws_url, extra_headers=headers) as openai_ws:
+        async with ws_connect(openai_ws_url, additional_headers=headers) as openai_ws:
             # Configure the session
             session_config = {
                 "type": "session.update",
