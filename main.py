@@ -1707,18 +1707,29 @@ async def submit_answer(request: Request, data: AnswerSubmit):
         dev=analyze_behavioral_deviation(session,data.answer,data.answer_duration_sec,data.word_count,data.thinking_pause_sec,data.input_mode,current_entry.get("difficulty","basic"))
         current_entry["behavioral_flags"]=dev["flags"]; current_entry["behavioral_deviation"]=dev["deviation_score"]
 
-        # AI content detection — check if answer is AI-generated (only for technical answers with enough text)
+        # AI content detection — runs in BACKGROUND (doesn't block next question)
         if session["phase"] == "interview" and data.word_count >= 15:
-            ai_result = detect_ai_content(data.answer, session_id=sid)
-            current_entry["ai_detection"] = ai_result
-            if ai_result.get("is_ai"):
-                # Get the highest score from whichever detector flagged it
-                s_score = (ai_result.get("sapling") or {}).get("score", 0)
-                current_entry["behavioral_flags"].append("ai_generated_answer")
-                session["running_suspicion"] = session.get("running_suspicion", 0) + 15
-                record_notable(session, session["turn"]-1, current_entry.get("question",""), data.answer,
-                    "concern_flag", f"AI-generated answer detected at question {session['turn']-1} (sapling: {s_score:.0%})")
-                print(f"[AI Detect] WARNING: AI-generated answer at question {session['turn']-1} (sapling: {s_score:.0%})")
+            _answer = data.answer
+            _entry = current_entry
+            _sess = session
+            _turn = session["turn"] - 1
+            _sid = sid
+            def _bg_ai_detect():
+                try:
+                    ai_result = detect_ai_content(_answer, session_id=_sid)
+                    _entry["ai_detection"] = ai_result
+                    if ai_result.get("is_ai"):
+                        s_score = (ai_result.get("sapling") or {}).get("score", 0)
+                        _entry.setdefault("behavioral_flags", []).append("ai_generated_answer")
+                        _sess["running_suspicion"] = _sess.get("running_suspicion", 0) + 15
+                        record_notable(_sess, _turn, _entry.get("question",""), _answer,
+                            "concern_flag", f"AI-generated answer detected at question {_turn} (sapling: {s_score:.0%})")
+                        print(f"[AI Detect] WARNING: AI-generated at Q{_turn} (sapling: {s_score:.0%})")
+                    else:
+                        print(f"[AI Detect] Q{_turn}: human (sapling: {(ai_result.get('sapling') or {}).get('score', 0):.0%})")
+                except Exception as e:
+                    print(f"[AI Detect] Background failed: {e}")
+            threading.Thread(target=_bg_ai_detect, daemon=True).start()
 
     if session["phase"]=="greeting":
         if session.get("skip_warmup"):
@@ -1887,8 +1898,7 @@ async def submit_answer(request: Request, data: AnswerSubmit):
 
     technical_turns=session["turn"]-session.get("warmup_turns",0)-1
     should_end=(technical_turns>=20 or session["phase"]=="ended" or struggling_end or off_topic_end or result.get("warmup_decision")=="end_not_ready")
-    # Don't generate TTS here — frontend will stream it via /api/stream-tts (faster startup)
-    audio = ""
+    audio=synthesize_speech(result["question"], session_id=sid)
     return JSONResponse({"question":result["question"],"question_type":result.get("question_type","interview"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"difficulty":result.get("difficulty",DIFFICULTY_LABELS[session["difficulty_level"]]),"should_end":should_end,"hint_given":result.get("hint_given",False),"hint_text":result.get("hint_text"),"warmup_decision":result.get("warmup_decision"),"warmup_performance":session.get("warmup_performance","pending")})
 
 @app.get("/api/stream-tts")
