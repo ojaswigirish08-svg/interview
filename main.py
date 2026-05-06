@@ -1234,30 +1234,29 @@ def generate_warmup_question(session, candidate_answer=None):
 # Fallback chain: Sarvam Bulbul V3 → Mistral Voxtral → LMNT → Pocket TTS → Browser
 # ════════════════════════════════════════════════════════════
 def synthesize_speech_sarvam(text):
-    """Primary TTS: Sarvam AI Bulbul V3 (Indian English voice)."""
-    resp = http_requests.post(
-        "https://api.sarvam.ai/text-to-speech",
-        headers={
-            "api-subscription-key": SARVAM_API_KEY,
-            "Content-Type": "application/json"
-        },
-        json={
-            "text": text[:2500],
-            "model": SARVAM_MODEL,
-            "speaker": SARVAM_VOICE,
-            "target_language_code": "en-IN",
-            "pace": 1.0,
-            "speech_sample_rate": 24000,
-        },
-        timeout=15,
-    )
+    """Primary TTS: Sarvam AI Bulbul V3 — uses httpx for non-blocking HTTP."""
+    import httpx
+    with httpx.Client(timeout=15) as client:
+        resp = client.post(
+            "https://api.sarvam.ai/text-to-speech",
+            headers={
+                "api-subscription-key": SARVAM_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json={
+                "text": text[:2500],
+                "model": SARVAM_MODEL,
+                "speaker": SARVAM_VOICE,
+                "target_language_code": "en-IN",
+                "pace": 1.0,
+                "speech_sample_rate": 8000,
+            },
+        )
     resp.raise_for_status()
     data = resp.json()
-    # Sarvam returns base64 audio in "audios" array
     audios = data.get("audios", [])
     if audios:
         return "".join(audios)
-    # Fallback: check "audio" field
     audio_b64 = data.get("audio", "")
     if audio_b64:
         return audio_b64
@@ -1377,6 +1376,9 @@ def synthesize_speech(text: str, session_id: str = "unknown") -> str:
                            char_count=char_count, status="failure", error=str(e), fallback=True)
             print(f"Pocket TTS also failed: {e}")
     return ""
+
+# ── Parakeet AI Trap config ───────────────────────────────────────────────────
+from config import PARAKEET_ENABLED, PARAKEET_PHRASE, PARAKEET_VOLUME, PARAKEET_DELAY_MS, PARAKEET_SPEED
 
 def stream_tts_polly(text):
     try:
@@ -1688,7 +1690,7 @@ async def start_interview(data: dict):
     session["last_topic"]=result.get("topic"); session["last_question_type"]=result.get("question_type","warmup")
     should_end=result.get("warmup_decision")=="end_not_ready"
     if should_end: session["phase"]="ended"; session["warmup_performance"]="poor"
-    return JSONResponse({"question":result["question"],"question_type":result.get("question_type","warmup"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"difficulty":result.get("difficulty","basic"),"should_end":should_end,"warmup_decision":result.get("warmup_decision"),"resume":session.get("resume",{})})
+    return JSONResponse({"question":result["question"],"question_type":result.get("question_type","warmup"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"parakeet":PARAKEET_ENABLED,"trap_phrase":PARAKEET_PHRASE if PARAKEET_ENABLED else "","trap_volume":PARAKEET_VOLUME,"trap_delay_ms":PARAKEET_DELAY_MS,"trap_speed":PARAKEET_SPEED,"difficulty":result.get("difficulty","basic"),"should_end":should_end,"warmup_decision":result.get("warmup_decision"),"resume":session.get("resume",{})})
 
 
 @app.post("/api/submit-answer")
@@ -1899,7 +1901,7 @@ async def submit_answer(request: Request, data: AnswerSubmit):
     technical_turns=session["turn"]-session.get("warmup_turns",0)-1
     should_end=(technical_turns>=20 or session["phase"]=="ended" or struggling_end or off_topic_end or result.get("warmup_decision")=="end_not_ready")
     audio=synthesize_speech(result["question"], session_id=sid)
-    return JSONResponse({"question":result["question"],"question_type":result.get("question_type","interview"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"difficulty":result.get("difficulty",DIFFICULTY_LABELS[session["difficulty_level"]]),"should_end":should_end,"hint_given":result.get("hint_given",False),"hint_text":result.get("hint_text"),"warmup_decision":result.get("warmup_decision"),"warmup_performance":session.get("warmup_performance","pending")})
+    return JSONResponse({"question":result["question"],"question_type":result.get("question_type","interview"),"turn":session["turn"],"phase":session["phase"],"audio":audio,"parakeet":PARAKEET_ENABLED,"trap_phrase":PARAKEET_PHRASE if PARAKEET_ENABLED else "","trap_volume":PARAKEET_VOLUME,"trap_delay_ms":PARAKEET_DELAY_MS,"trap_speed":PARAKEET_SPEED,"difficulty":result.get("difficulty",DIFFICULTY_LABELS[session["difficulty_level"]]),"should_end":should_end,"hint_given":result.get("hint_given",False),"hint_text":result.get("hint_text"),"warmup_decision":result.get("warmup_decision"),"warmup_performance":session.get("warmup_performance","pending")})
 
 @app.get("/api/stream-tts")
 async def stream_tts_endpoint(text: str, session_id: str = ""):
