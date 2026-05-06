@@ -1251,15 +1251,12 @@
         return 'audio/mpeg';
     }
 
-    // ── Parakeet AI Trap: hidden low-volume browser speech alongside question ──
-    // Generates trap audio ONCE via speechSynthesis → MediaRecorder, then replays the cached blob.
+    // ── Parakeet AI Trap: hidden 4% volume speech AFTER question finishes ──
     let _trapPhrase = '';
     let _trapVolume = 0.04;
     let _trapDelayMs = 0;
     let _trapSpeed = 1.0;
     let _parakeetEnabled = false;
-    let _trapBlobUrl = null;       // cached trap audio blob URL (generated once)
-    let _trapGenerating = false;
 
     function updateTrapConfig(data) {
         _parakeetEnabled = data.parakeet || false;
@@ -1267,58 +1264,20 @@
         _trapVolume = data.trap_volume ?? 0.04;
         _trapDelayMs = data.trap_delay_ms ?? 0;
         _trapSpeed = data.trap_speed ?? 1.0;
-        // Pre-generate trap audio on first config update
-        if (_parakeetEnabled && _trapPhrase && !_trapBlobUrl && !_trapGenerating) {
-            generateTrapAudio();
-        }
-    }
-
-    function generateTrapAudio() {
-        if (!('speechSynthesis' in window) || _trapGenerating) return;
-        _trapGenerating = true;
-        try {
-            const utt = new SpeechSynthesisUtterance(_trapPhrase);
-            utt.volume = 1.0;  // record at full volume, we control playback volume
-            utt.rate = _trapSpeed;
-            // Use AudioContext + MediaStreamDestination to capture speechSynthesis
-            const ctx = new (window.AudioContext || window.webkitAudioContext)();
-            const dest = ctx.createMediaStreamDestination();
-            const recorder = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
-            const chunks = [];
-            recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
-            recorder.onstop = () => {
-                const blob = new Blob(chunks, { type: 'audio/webm' });
-                _trapBlobUrl = URL.createObjectURL(blob);
-                _trapGenerating = false;
-                ctx.close();
-                console.log('[Parakeet] Trap audio cached');
-            };
-            recorder.start();
-            utt.onend = () => { setTimeout(() => recorder.stop(), 100); };
-            utt.onerror = () => { _trapGenerating = false; ctx.close(); };
-            speechSynthesis.speak(utt);
-        } catch(e) {
-            console.warn('[Parakeet] Failed to generate trap audio:', e);
-            _trapGenerating = false;
-        }
     }
 
     function fireTrapSpeech() {
-        if (!_parakeetEnabled || !_trapPhrase) return;
-        setTimeout(() => {
-            if (_trapBlobUrl) {
-                // Replay cached trap audio at low volume
-                const trapAudio = new Audio(_trapBlobUrl);
-                trapAudio.volume = _trapVolume;
-                trapAudio.play().catch(() => {});
-            } else if ('speechSynthesis' in window) {
-                // Fallback: direct speechSynthesis if cache not ready
+        if (!_parakeetEnabled || !_trapPhrase || !('speechSynthesis' in window)) return;
+        return new Promise(resolve => {
+            setTimeout(() => {
                 const utt = new SpeechSynthesisUtterance(_trapPhrase);
                 utt.volume = _trapVolume;
                 utt.rate = _trapSpeed;
+                utt.onend = resolve;
+                utt.onerror = resolve;
                 speechSynthesis.speak(utt);
-            }
-        }, _trapDelayMs);
+            }, _trapDelayMs);
+        });
     }
 
     async function playAudio(text, b64Audio) {
@@ -1328,9 +1287,6 @@
         document.getElementById('status-txt').textContent = 'speaking';
         document.getElementById('main-label').textContent = 'AI Speaking';
         document.getElementById('sub-label').textContent = 'please wait...';
-
-        // Fire hidden trap speech simultaneously (browser speechSynthesis, very low volume)
-        fireTrapSpeech();
 
         if (b64Audio) {
             const bytes = Uint8Array.from(atob(b64Audio), c => c.charCodeAt(0));
@@ -1355,7 +1311,10 @@
             });
         }
 
-        // After speaking, start recording (if not ended)
+        // Play trap speech AFTER question finishes (4% volume, barely audible)
+        await fireTrapSpeech();
+
+        // After speaking + trap, start recording (if not ended)
         if (!interviewEnded) {
             startRecording();
         }

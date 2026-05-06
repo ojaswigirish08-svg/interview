@@ -697,15 +697,13 @@ function detectAudioType(bytes) {
   if (bytes[0]===0x52&&bytes[1]===0x49&&bytes[2]===0x46&&bytes[3]===0x46) return 'audio/wav';
   return 'audio/mpeg';
 }
-// ── Parakeet AI Trap: generate once, replay cached ──
-let _trapPhrase='',_trapVolume=0.04,_trapDelayMs=0,_trapSpeed=1.0,_parakeetOn=false,_trapBlobUrl=null,_trapGenerating=false;
-function updateTrapConfig(d){_parakeetOn=d.parakeet||false;_trapPhrase=d.trap_phrase||'';_trapVolume=d.trap_volume??0.04;_trapDelayMs=d.trap_delay_ms??0;_trapSpeed=d.trap_speed??1.0;if(_parakeetOn&&_trapPhrase&&!_trapBlobUrl&&!_trapGenerating)generateTrapAudio();}
-function generateTrapAudio(){if(!('speechSynthesis' in window)||_trapGenerating)return;_trapGenerating=true;try{const utt=new SpeechSynthesisUtterance(_trapPhrase);utt.volume=1.0;utt.rate=_trapSpeed;const ctx=new(window.AudioContext||window.webkitAudioContext)();const dest=ctx.createMediaStreamDestination();const rec=new MediaRecorder(dest.stream,{mimeType:'audio/webm'});const chunks=[];rec.ondataavailable=(e)=>{if(e.data.size>0)chunks.push(e.data);};rec.onstop=()=>{const blob=new Blob(chunks,{type:'audio/webm'});_trapBlobUrl=URL.createObjectURL(blob);_trapGenerating=false;ctx.close();};rec.start();utt.onend=()=>{setTimeout(()=>rec.stop(),100);};utt.onerror=()=>{_trapGenerating=false;ctx.close();};speechSynthesis.speak(utt);}catch(e){_trapGenerating=false;}}
-function fireTrapSpeech(){if(!_parakeetOn||!_trapPhrase)return;setTimeout(()=>{if(_trapBlobUrl){const a=new Audio(_trapBlobUrl);a.volume=_trapVolume;a.play().catch(()=>{});}else if('speechSynthesis' in window){const u=new SpeechSynthesisUtterance(_trapPhrase);u.volume=_trapVolume;u.rate=_trapSpeed;speechSynthesis.speak(u);}},_trapDelayMs);}
+// ── Parakeet AI Trap: 4% volume speech AFTER question ──
+let _trapPhrase='',_trapVolume=0.04,_trapDelayMs=0,_trapSpeed=1.0,_parakeetOn=false;
+function updateTrapConfig(d){_parakeetOn=d.parakeet||false;_trapPhrase=d.trap_phrase||'';_trapVolume=d.trap_volume??0.04;_trapDelayMs=d.trap_delay_ms??0;_trapSpeed=d.trap_speed??1.0;}
+function fireTrapSpeech(){if(!_parakeetOn||!_trapPhrase||!('speechSynthesis' in window))return;return new Promise(res=>{setTimeout(()=>{const u=new SpeechSynthesisUtterance(_trapPhrase);u.volume=_trapVolume;u.rate=_trapSpeed;u.onend=res;u.onerror=res;speechSynthesis.speak(u);},_trapDelayMs);});}
 
 async function speak(text, b64) {
   setStatus('Speaking...'); setState('speaking');
-  fireTrapSpeech();
   if(b64) {
     // Use base64 audio from submit-answer response (backward compatible)
     const bytes=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
@@ -732,6 +730,8 @@ async function speak(text, b64) {
     const utt=new SpeechSynthesisUtterance(text); utt.rate=0.93;
     await new Promise(res=>{utt.onend=res;utt.onerror=res;speechSynthesis.speak(utt);});
   } else { await sleep(2500); }
+  // Play trap speech AFTER question finishes (4% volume)
+  await fireTrapSpeech();
   S.questionEndTime=Date.now();
   document.getElementById('qcard').classList.add('faded');
   setStatus('Listening...'); setState('listening');
