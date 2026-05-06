@@ -1202,7 +1202,7 @@
 
             displayQuestion(data);
             updateTrapConfig(data);
-            await playAudio(data.question, data.audio);
+            await playAudio(data.question, data.audio, data.phase);
         } catch (e) {
             console.error('Init error:', e);
             document.getElementById('question-text').textContent = 'Error starting interview. Please refresh.';
@@ -1280,7 +1280,7 @@
         });
     }
 
-    async function playAudio(text, b64Audio) {
+    async function playAudio(text, b64Audio, phase) {
         if (interviewEnded) return;
 
         setOrb('speaking');
@@ -1311,8 +1311,10 @@
             });
         }
 
-        // Play trap speech AFTER question finishes (4% volume, barely audible)
-        await fireTrapSpeech();
+        // Play trap speech AFTER question finishes — only for technical questions, not warmup/greeting
+        if (phase === 'interview') {
+            await fireTrapSpeech();
+        }
 
         // After speaking + trap, start recording (if not ended)
         if (!interviewEnded) {
@@ -1577,7 +1579,7 @@
             // Display next question
             displayQuestion(ad);
             updateTrapConfig(ad);
-            await playAudio(ad.question, ad.audio);
+            await playAudio(ad.question, ad.audio, ad.phase);
 
         } catch (e) {
             console.error('Error:', e);

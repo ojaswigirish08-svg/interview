@@ -702,7 +702,7 @@ let _trapPhrase='',_trapVolume=0.04,_trapDelayMs=0,_trapSpeed=1.0,_parakeetOn=fa
 function updateTrapConfig(d){_parakeetOn=d.parakeet||false;_trapPhrase=d.trap_phrase||'';_trapVolume=d.trap_volume??0.04;_trapDelayMs=d.trap_delay_ms??0;_trapSpeed=d.trap_speed??1.0;}
 function fireTrapSpeech(){if(!_parakeetOn||!_trapPhrase||!('speechSynthesis' in window))return;return new Promise(res=>{setTimeout(()=>{const u=new SpeechSynthesisUtterance(_trapPhrase);u.volume=_trapVolume;u.rate=_trapSpeed;u.onend=res;u.onerror=res;speechSynthesis.speak(u);},_trapDelayMs);});}
 
-async function speak(text, b64) {
+async function speak(text, b64, phase) {
   setStatus('Speaking...'); setState('speaking');
   if(b64) {
     // Use base64 audio from submit-answer response (backward compatible)
@@ -730,8 +730,8 @@ async function speak(text, b64) {
     const utt=new SpeechSynthesisUtterance(text); utt.rate=0.93;
     await new Promise(res=>{utt.onend=res;utt.onerror=res;speechSynthesis.speak(utt);});
   } else { await sleep(2500); }
-  // Play trap speech AFTER question finishes (4% volume)
-  await fireTrapSpeech();
+  // Play trap speech AFTER question finishes — only for technical questions, not warmup/greeting
+  if (phase === 'interview') await fireTrapSpeech();
   S.questionEndTime=Date.now();
   document.getElementById('qcard').classList.add('faded');
   setStatus('Listening...'); setState('listening');
@@ -934,7 +934,7 @@ async function submitAnswer(answer, dur=0, wc=0, pause=0, mode='text', conf=1.0)
     if(d.should_end){await endInterview();return;}
     S.currentTurn=d.turn; S.currentPhase=d.phase;
     if(d.phase==='interview'&&!S.warmupTurns) S.warmupTurns=d.turn-1;
-    displayQ(d); updateTrapConfig(d); await speak(d.question, d.audio);
+    displayQ(d); updateTrapConfig(d); await speak(d.question, d.audio, d.phase);
   } catch(e){ setStatus('Error. Try again.'); setState('idle'); }
 }
 
